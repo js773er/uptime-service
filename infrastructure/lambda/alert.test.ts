@@ -54,7 +54,8 @@ describe("handler", () => {
 
   it("falls back to ALERT_FALLBACK_EMAIL when the monitor has no alertEmail", async () => {
     process.env.ALERT_FALLBACK_EMAIL = "fallback@example.com";
-    const { alertEmail: _unused, ...noEmail } = alert;
+    const noEmail: IncidentAlert = { ...alert };
+    delete noEmail.alertEmail;
 
     await handler(sqsEvent(JSON.stringify(noEmail)));
 

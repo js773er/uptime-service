@@ -1,3 +1,4 @@
+import { currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getUserId } from "@/lib/auth";
 import { createMonitor, getMonitorsByUser } from "@/lib/monitors";
@@ -7,15 +8,22 @@ import { createMonitorSchema } from "@/lib/schemas";
 const MAX_MONITORS_PER_USER = 5;
 
 /** GET /api/monitors — list the current user's monitors. */
-export async function GET(request: Request) {
-  const userId = getUserId(request);
+export async function GET() {
+  const userId = await getUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   const monitors = await getMonitorsByUser(userId);
   return NextResponse.json({ monitors });
 }
 
 /** POST /api/monitors — create a monitor (max 5 per user). */
 export async function POST(request: Request) {
-  const userId = getUserId(request);
+  const userId = await getUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   let body: unknown;
   try {
@@ -40,11 +48,16 @@ export async function POST(request: Request) {
     );
   }
 
+  // Default downtime alerts to the account's email unless one was provided.
+  const user = await currentUser();
+  const alertEmail =
+    parsed.data.alertEmail ?? user?.primaryEmailAddress?.emailAddress;
+
   const monitor = await createMonitor({
     userId,
     name: parsed.data.name,
     url: parsed.data.url,
-    alertEmail: parsed.data.alertEmail,
+    alertEmail,
   });
 
   return NextResponse.json({ monitor }, { status: 201 });

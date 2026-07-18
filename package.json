@@ -13,14 +13,17 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1050.0",
+    "@aws-sdk/client-sqs": "^3.967.0",
     "@aws-sdk/lib-dynamodb": "^3.1050.0",
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "resend": "^6.4.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/aws-lambda": "^8.10.162",
     "@types/node": "^20.19.41",
     "@types/react": "^19",
     "@types/react-dom": "^19",

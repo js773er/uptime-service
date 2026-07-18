@@ -49,6 +49,32 @@ export async function getOpenIncident(
   return open ? toIncident(open as IncidentItem) : null;
 }
 
+/**
+ * Incident history for a monitor, newest first. Incident SKs contain random
+ * ids (not timestamps), so ordering happens in memory — incident counts per
+ * monitor are small, so this stays cheap.
+ */
+export async function getIncidentsByMonitor(
+  monitorId: string,
+  limit = 20,
+): Promise<Incident[]> {
+  const result = await db.send(
+    new QueryCommand({
+      TableName: TABLE_NAME,
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": monitorPk(monitorId),
+        ":sk": "INCIDENT#",
+      },
+    }),
+  );
+
+  return (result.Items ?? [])
+    .map((i) => toIncident(i as IncidentItem))
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    .slice(0, limit);
+}
+
 /** Open a new incident when a monitor transitions up -> down. */
 export async function openIncident(input: {
   monitorId: string;

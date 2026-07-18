@@ -44,6 +44,7 @@ export async function POST(request: Request) {
     userId,
     name: parsed.data.name,
     url: parsed.data.url,
+    alertEmail: parsed.data.alertEmail,
   });
 
   return NextResponse.json({ monitor }, { status: 201 });

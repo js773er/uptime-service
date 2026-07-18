@@ -89,3 +89,27 @@ keep it current and in plain language.
 - The Resend SDK reports failures via a returned `error` field rather than
   throwing; the consumer converts that into an exception so the SQS retry/DLQ
   path actually engages.
+
+## Step 5 — CDK infrastructure (`feature/cdk-infra`)
+
+- **One stack** (`infrastructure/lib/uptime-service-stack.ts`), CDK app under
+  `infrastructure/` with its own `cdk.json` (runs via `tsx`); `npm run synth` /
+  `npm run deploy` from the repo root. Region pinned to ap-southeast-2.
+- **DynamoDB on-demand**: traffic is one checker run per minute — provisioned
+  capacity would be guesswork. GSI1 declared to match the sparse active-monitor
+  index from Step 3. `RemovalPolicy.DESTROY` for painless demo teardown
+  (production would RETAIN + PITR).
+- **Lambdas as `NodejsFunction`** (esbuild bundling, `tsconfig` passed so the
+  `@/*` alias resolves): Node 22 on ARM64 (cheaper per ms), 256MB. Checker
+  timeout 30s (10s-capped probes run concurrently); alert 15s. Explicit
+  `LogGroup`s with 7-day retention (avoids the deprecated `logRetention`
+  custom resource).
+- **Queue numbers**: visibility timeout 90s (≥6x consumer timeout per SQS
+  guidance), DLQ after 3 receives, 14-day DLQ retention.
+- **Least privilege**: checker gets table read/write + queue send; alert
+  lambda only receives from the queue via the event source. Nothing else.
+- **Assertion tests** on the synthesized template (table + GSI, 1-minute rule,
+  redrive policy, partial-batch flag, exactly two lambdas, log retention) —
+  they run in the normal vitest suite and catch config drift.
+- Resend secrets go in as deploy-time env passthrough; noted Secrets Manager
+  as the production-grade alternative.

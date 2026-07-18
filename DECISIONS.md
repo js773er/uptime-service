@@ -167,3 +167,16 @@ keep it current and in plain language.
   whether the service is healthy without learning which endpoint is probed.
 - Checks and incidents were already keyed by `MONITOR#<id>`, so those queries
   needed no changes — only the monitor lookup did.
+
+## Step 9 — Polish (`feature/polish`)
+
+- **README** rewritten: mermaid architecture diagram, data model table, local
+  setup, env-var reference, deploy steps (CDK bootstrap + deploy, Vercel,
+  billing budget), and a short tech-rationale section pointing here.
+- **CI** (GitHub Actions): lint, typecheck, tests and `cdk synth` on every PR
+  and on pushes to `dev`/`main` — synth in CI means broken infra code can't
+  merge, not just broken app code.
+- Deployment itself is a credentialed action done from a local machine (CDK)
+  and the Vercel dashboard; the README documents both paths. The $10 AWS
+  budget is a console step — CloudFormation budget resources are only
+  supported in us-east-1, so documenting beat adding a second-region stack.

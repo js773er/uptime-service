@@ -28,6 +28,13 @@ const monitorSk = (monitorId: string) => `MONITOR#${monitorId}`;
 export const ACTIVE_MONITORS_INDEX = "GSI1";
 const ACTIVE_INDEX_PK = "MONITOR#ACTIVE";
 
+/**
+ * Id-only lookup index for the public status page: the public URL carries just
+ * a monitorId, but the base-table key is USER#<userId>. Every monitor carries
+ * GSI2PK = MONITOR#<monitorId> (one item per partition).
+ */
+export const MONITOR_BY_ID_INDEX = "GSI2";
+
 /** Item shape as stored in DynamoDB (domain fields + table keys). */
 interface MonitorItem extends Monitor {
   PK: string;
@@ -36,6 +43,8 @@ interface MonitorItem extends Monitor {
   /** Present only while active (sparse index). */
   GSI1PK?: string;
   GSI1SK?: string;
+  /** Always present: id-only lookup for the public status page. */
+  GSI2PK: string;
 }
 
 /** Strip the persistence-only fields before handing a Monitor to callers. */
@@ -74,6 +83,7 @@ export async function createMonitor(input: {
     // Active on creation -> include the sparse index keys.
     GSI1PK: ACTIVE_INDEX_PK,
     GSI1SK: monitorSk(monitor.monitorId),
+    GSI2PK: monitorSk(monitor.monitorId),
     ...monitor,
   };
 
@@ -130,6 +140,27 @@ export async function getActiveMonitors(): Promise<Monitor[]> {
   } while (lastKey);
 
   return monitors;
+}
+
+/**
+ * Look a monitor up by id alone — used by the public status page, which has
+ * no user context. Returns null for unknown ids.
+ */
+export async function getMonitorByPublicId(
+  monitorId: string,
+): Promise<Monitor | null> {
+  const result = await db.send(
+    new QueryCommand({
+      TableName: TABLE_NAME,
+      IndexName: MONITOR_BY_ID_INDEX,
+      KeyConditionExpression: "GSI2PK = :pk",
+      ExpressionAttributeValues: { ":pk": monitorSk(monitorId) },
+      Limit: 1,
+    }),
+  );
+
+  const item = result.Items?.[0];
+  return item ? toMonitor(item as MonitorItem) : null;
 }
 
 export async function getMonitorById(

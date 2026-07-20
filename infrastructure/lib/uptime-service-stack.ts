@@ -37,6 +37,9 @@ export class UptimeServiceStack extends Stack {
       sortKey: { name: "SK", type: AttributeType.STRING },
       billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY,
+      // Check results are stamped with expiresAt (epoch seconds) so minutely
+      // history self-deletes after 30 days instead of growing forever.
+      timeToLiveAttribute: "expiresAt",
     });
 
     // Sparse index over active monitors: only items carrying GSI1PK appear,
@@ -67,49 +70,54 @@ export class UptimeServiceStack extends Stack {
       deadLetterQueue: { queue: alertDlq, maxReceiveCount: 3 },
     });
 
-    const checkerLogs = new LogGroup(this, "CheckerLogs", {
-      retention: RetentionDays.ONE_WEEK,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
+    // Shared shape for both lambdas: Node 22 on ARM64, 256MB, esbuild
+    // bundling with the root tsconfig (resolves the "@/*" alias), and an
+    // explicit log group with 7-day retention.
+    const serviceLambda = (
+      id: string,
+      props: {
+        entry: string;
+        timeout: Duration;
+        environment: Record<string, string>;
+      },
+    ) =>
+      new NodejsFunction(this, id, {
+        entry: path.join(LAMBDA_DIR, props.entry),
+        handler: "handler",
+        runtime: Runtime.NODEJS_22_X,
+        architecture: Architecture.ARM_64,
+        memorySize: 256,
+        timeout: props.timeout,
+        environment: props.environment,
+        bundling: { minify: true, tsconfig: TSCONFIG },
+        logGroup: new LogGroup(this, `${id}Logs`, {
+          retention: RetentionDays.ONE_WEEK,
+          removalPolicy: RemovalPolicy.DESTROY,
+        }),
+      });
 
-    const checker = new NodejsFunction(this, "CheckerFunction", {
-      entry: path.join(LAMBDA_DIR, "checker.ts"),
-      handler: "handler",
-      runtime: Runtime.NODEJS_22_X,
-      architecture: Architecture.ARM_64,
-      memorySize: 256,
+    const checker = serviceLambda("CheckerFunction", {
+      entry: "checker.ts",
       // Probes run concurrently with a 10s cap each; 30s covers the batch
       // plus DynamoDB round-trips.
       timeout: Duration.seconds(30),
-      logGroup: checkerLogs,
       environment: {
         TABLE_NAME: table.tableName,
         ALERT_QUEUE_URL: alertQueue.queueUrl,
       },
-      bundling: { minify: true, tsconfig: TSCONFIG },
     });
 
-    const alertLogs = new LogGroup(this, "AlertLogs", {
-      retention: RetentionDays.ONE_WEEK,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-
-    const alert = new NodejsFunction(this, "AlertFunction", {
-      entry: path.join(LAMBDA_DIR, "alert.ts"),
-      handler: "handler",
-      runtime: Runtime.NODEJS_22_X,
-      architecture: Architecture.ARM_64,
-      memorySize: 256,
+    const alert = serviceLambda("AlertFunction", {
+      entry: "alert.ts",
       timeout: Duration.seconds(15),
-      logGroup: alertLogs,
       environment: {
-        // Injected at deploy time. A production setup would read these from
-        // Secrets Manager; env passthrough keeps the demo self-contained.
+        // Injected at deploy time (bin/app.ts loads the repo-root .env.local
+        // first). A production setup would read these from Secrets Manager;
+        // env passthrough keeps the demo self-contained.
         RESEND_API_KEY: process.env.RESEND_API_KEY ?? "",
         ALERT_FROM_EMAIL: process.env.ALERT_FROM_EMAIL ?? "",
         ALERT_FALLBACK_EMAIL: process.env.ALERT_FALLBACK_EMAIL ?? "",
       },
-      bundling: { minify: true, tsconfig: TSCONFIG },
     });
 
     // Only failed messages in a batch are retried (matches the handler's

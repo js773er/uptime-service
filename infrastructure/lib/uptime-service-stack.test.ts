@@ -26,6 +26,12 @@ describe("UptimeServiceStack", () => {
     });
   });
 
+  it("enables TTL on the expiresAt attribute", () => {
+    template.hasResourceProperties("AWS::DynamoDB::Table", {
+      TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+    });
+  });
+
   it("schedules the checker every minute", () => {
     template.hasResourceProperties("AWS::Events::Rule", {
       ScheduleExpression: "rate(1 minute)",

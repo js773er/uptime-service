@@ -39,6 +39,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.RESEND_API_KEY;
   delete process.env.ALERT_FALLBACK_EMAIL;
+  delete process.env.ALERT_FROM_EMAIL;
 });
 
 describe("handler", () => {
@@ -74,6 +75,17 @@ describe("handler", () => {
     );
 
     expect(result.batchItemFailures).toEqual([{ itemIdentifier: "msg-0" }]);
+  });
+
+  it("falls back to the default sender when ALERT_FROM_EMAIL is empty", async () => {
+    // CDK injects unset deploy-time vars as "" — the fallback must engage.
+    process.env.ALERT_FROM_EMAIL = "";
+
+    await handler(sqsEvent(JSON.stringify(alert)));
+
+    expect(sendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "Uptime <onboarding@resend.dev>" }),
+    );
   });
 
   it("marks malformed messages failed so they reach the DLQ", async () => {

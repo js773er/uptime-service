@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import { writeCheckResult } from "@/lib/checks";
 import {
   closeIncident,
@@ -5,6 +6,7 @@ import {
   openIncident,
 } from "@/lib/incidents";
 import { getActiveMonitors } from "@/lib/monitors";
+import { isBlockedIpAddress } from "@/lib/schemas";
 import type { CheckResult, Monitor } from "@/types";
 import { decideIncidentTransition } from "./incident-logic";
 import { enqueueIncidentAlert } from "./queue";
@@ -21,6 +23,25 @@ export interface UrlProbe {
 }
 
 /**
+ * URL validation happens at create time, but DNS can change afterwards (DNS
+ * rebinding): a hostname that resolved publicly yesterday can point at a
+ * private address today. Re-check every resolved address right before the
+ * fetch. Resolution failures return false — the fetch reports the real error.
+ */
+async function resolvesToBlockedAddress(url: string): Promise<boolean> {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  if (isBlockedIpAddress(host)) {
+    return true;
+  }
+  try {
+    const addresses = await lookup(host, { all: true });
+    return addresses.some((a) => isBlockedIpAddress(a.address));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Probe a URL with a hard timeout. 2xx/3xx counts as up. Redirects are not
  * followed: it keeps 3xx as "up" and avoids a redirect being used to reach an
  * address the URL validation already rejected (SSRF defence-in-depth).
@@ -29,6 +50,15 @@ export async function probeUrl(
   url: string,
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<UrlProbe> {
+  if (await resolvesToBlockedAddress(url)) {
+    return {
+      statusCode: null,
+      responseTimeMs: 0,
+      isUp: false,
+      error: "hostname resolves to a private or reserved address",
+    };
+  }
+
   const start = performance.now();
   try {
     const response = await fetch(url, {
@@ -92,6 +122,10 @@ export async function checkMonitor(
       statusCode: probe.statusCode,
       error: probe.error,
     });
+    // Null means an overlapping run opened it first — that run alerts.
+    if (!incident) {
+      return;
+    }
 
     // Alert only on the up->down edge, never on every failing check.
     // Best-effort: a queue hiccup must not fail the check itself — the
@@ -130,14 +164,13 @@ export async function handler(): Promise<void> {
     monitors.map((monitor) => checkMonitor(monitor, now)),
   );
 
-  const failed = results.filter((r) => r.status === "rejected");
-  for (const failure of failed) {
-    if (failure.status === "rejected") {
-      console.error("monitor check failed:", failure.reason);
+  let failed = 0;
+  for (const result of results) {
+    if (result.status === "rejected") {
+      failed += 1;
+      console.error("monitor check failed:", result.reason);
     }
   }
 
-  console.log(
-    `checked ${monitors.length} monitor(s), ${failed.length} failed`,
-  );
+  console.log(`checked ${monitors.length} monitor(s), ${failed} failed`);
 }

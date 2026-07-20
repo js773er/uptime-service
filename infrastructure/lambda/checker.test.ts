@@ -9,7 +9,11 @@ vi.mock("@/lib/incidents", () => ({
 }));
 vi.mock("@/lib/monitors", () => ({ getActiveMonitors: vi.fn() }));
 vi.mock("./queue", () => ({ enqueueIncidentAlert: vi.fn() }));
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+}));
 
+import { lookup } from "node:dns/promises";
 import { writeCheckResult } from "@/lib/checks";
 import { closeIncident, getOpenIncident, openIncident } from "@/lib/incidents";
 import { checkMonitor, probeUrl } from "./checker";
@@ -71,6 +75,26 @@ describe("probeUrl", () => {
     const probe = await probeUrl("https://example.com");
     expect(probe.isUp).toBe(false);
     expect(probe.error).toBe("ENOTFOUND");
+  });
+
+  it("refuses to fetch a hostname that resolves to a private address", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    vi.mocked(lookup).mockResolvedValueOnce([
+      { address: "10.0.0.5", family: 4 },
+    ] as never);
+
+    const probe = await probeUrl("https://rebound.example.com");
+    expect(probe.isUp).toBe(false);
+    expect(probe.error).toMatch(/private or reserved/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses to fetch private IP literals without a DNS lookup", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const probe = await probeUrl("https://169.254.169.254");
+    expect(probe.isUp).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -140,6 +164,19 @@ describe("checkMonitor", () => {
     await checkMonitor(monitor, now);
 
     expect(closeIncident).toHaveBeenCalledWith(openedIncident, now);
+    expect(enqueueIncidentAlert).not.toHaveBeenCalled();
+  });
+
+  it("skips the alert when an overlapping run already opened the incident", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 503 }),
+    );
+    vi.mocked(getOpenIncident).mockResolvedValue(null);
+    vi.mocked(openIncident).mockResolvedValue(null);
+
+    await checkMonitor(monitor, now);
+
+    expect(writeCheckResult).toHaveBeenCalledOnce();
     expect(enqueueIncidentAlert).not.toHaveBeenCalled();
   });
 

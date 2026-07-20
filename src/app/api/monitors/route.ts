@@ -1,11 +1,12 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getUserId } from "@/lib/auth";
-import { createMonitor, getMonitorsByUser } from "@/lib/monitors";
+import {
+  createMonitor,
+  getMonitorsByUser,
+  MonitorLimitError,
+} from "@/lib/monitors";
 import { createMonitorSchema } from "@/lib/schemas";
-
-/** Free-tier cap: a user may own at most this many monitors. */
-const MAX_MONITORS_PER_USER = 5;
 
 /** GET /api/monitors — list the current user's monitors. */
 export async function GET() {
@@ -40,25 +41,25 @@ export async function POST(request: Request) {
     );
   }
 
-  const existing = await getMonitorsByUser(userId);
-  if (existing.length >= MAX_MONITORS_PER_USER) {
-    return NextResponse.json(
-      { error: `monitor limit reached (max ${MAX_MONITORS_PER_USER})` },
-      { status: 403 },
-    );
-  }
-
   // Default downtime alerts to the account's email unless one was provided.
   const user = await currentUser();
   const alertEmail =
     parsed.data.alertEmail ?? user?.primaryEmailAddress?.emailAddress;
 
-  const monitor = await createMonitor({
-    userId,
-    name: parsed.data.name,
-    url: parsed.data.url,
-    alertEmail,
-  });
-
-  return NextResponse.json({ monitor }, { status: 201 });
+  try {
+    const monitor = await createMonitor({
+      userId,
+      name: parsed.data.name,
+      url: parsed.data.url,
+      alertEmail,
+    });
+    return NextResponse.json({ monitor }, { status: 201 });
+  } catch (err) {
+    // The cap is enforced atomically in the data layer (counter condition),
+    // so concurrent creates can't slip past a read-then-write window.
+    if (err instanceof MonitorLimitError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    }
+    throw err;
+  }
 }

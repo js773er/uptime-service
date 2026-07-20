@@ -1,21 +1,35 @@
 import { randomUUID } from "node:crypto";
+import { TransactionCanceledException } from "@aws-sdk/client-dynamodb";
 import {
-  DeleteCommand,
   GetCommand,
-  PutCommand,
   QueryCommand,
+  TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { db, TABLE_NAME } from "@/lib/dynamodb";
+import { db, monitorKey, TABLE_NAME } from "@/lib/dynamodb";
 import type { Monitor } from "@/types";
 
 /**
  * Key helpers for the Monitor entity:
  *   PK USER#<userId>   SK MONITOR#<monitorId>
- * Querying by PK returns all of a user's monitors.
+ * Querying by PK returns all of a user's monitors. A per-user counter item
+ * (SK MONITOR_COUNT — outside the MONITOR# prefix, so list queries skip it)
+ * enforces the monitor cap atomically.
  */
 const userPk = (userId: string) => `USER#${userId}`;
-const monitorSk = (monitorId: string) => `MONITOR#${monitorId}`;
+const monitorSk = monitorKey;
+const COUNT_SK = "MONITOR_COUNT";
+
+/** Free-tier cap, enforced in the database, surfaced in API and UI. */
+export const MAX_MONITORS_PER_USER = 5;
+
+/** Thrown when a create would exceed the cap; the API maps it to a 403. */
+export class MonitorLimitError extends Error {
+  constructor() {
+    super(`monitor limit reached (max ${MAX_MONITORS_PER_USER})`);
+    this.name = "MonitorLimitError";
+  }
+}
 
 /**
  * Sparse GSI used by the checker to list every active monitor across all users
@@ -49,17 +63,16 @@ interface MonitorItem extends Monitor {
 
 /** Strip the persistence-only fields before handing a Monitor to callers. */
 function toMonitor(item: MonitorItem): Monitor {
-  return {
-    userId: item.userId,
-    monitorId: item.monitorId,
-    name: item.name,
-    url: item.url,
-    active: item.active,
-    alertEmail: item.alertEmail,
-    createdAt: item.createdAt,
-  };
+  // Rest-destructure so new domain fields flow through without editing this.
+  const { PK, SK, entityType, GSI1PK, GSI1SK, GSI2PK, ...monitor } = item;
+  return monitor;
 }
 
+/**
+ * Create a monitor and bump the user's counter in one transaction. The
+ * counter's condition makes the cap atomic — two concurrent creates at the
+ * limit cannot both slip through a read-then-write window.
+ */
 export async function createMonitor(input: {
   userId: string;
   name: string;
@@ -87,14 +100,43 @@ export async function createMonitor(input: {
     ...monitor,
   };
 
-  await db.send(
-    new PutCommand({
-      TableName: TABLE_NAME,
-      Item: item,
-      // Guard against an (astronomically unlikely) UUID collision.
-      ConditionExpression: "attribute_not_exists(PK)",
-    }),
-  );
+  try {
+    await db.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: TABLE_NAME,
+              Key: { PK: userPk(monitor.userId), SK: COUNT_SK },
+              UpdateExpression: "ADD monitorCount :one",
+              ConditionExpression:
+                "attribute_not_exists(PK) OR monitorCount < :max",
+              ExpressionAttributeValues: {
+                ":one": 1,
+                ":max": MAX_MONITORS_PER_USER,
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: TABLE_NAME,
+              Item: item,
+              // Guard against an (astronomically unlikely) UUID collision.
+              ConditionExpression: "attribute_not_exists(PK)",
+            },
+          },
+        ],
+      }),
+    );
+  } catch (err) {
+    if (
+      err instanceof TransactionCanceledException &&
+      err.CancellationReasons?.[0]?.Code === "ConditionalCheckFailed"
+    ) {
+      throw new MonitorLimitError();
+    }
+    throw err;
+  }
 
   return monitor;
 }
@@ -177,16 +219,54 @@ export async function getMonitorById(
   return result.Item ? toMonitor(result.Item as MonitorItem) : null;
 }
 
+/**
+ * Delete a monitor: remove the item, decrement the user's counter, and clear
+ * any open incident so the status page never shows a permanently "ongoing"
+ * outage for a deleted monitor. Check history is left to expire via TTL.
+ * A no-op if the monitor is already gone.
+ */
 export async function deleteMonitor(
   userId: string,
   monitorId: string,
 ): Promise<void> {
-  await db.send(
-    new DeleteCommand({
-      TableName: TABLE_NAME,
-      Key: { PK: userPk(userId), SK: monitorSk(monitorId) },
-    }),
-  );
+  try {
+    await db.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Delete: {
+              TableName: TABLE_NAME,
+              Key: { PK: userPk(userId), SK: monitorSk(monitorId) },
+              ConditionExpression: "attribute_exists(PK)",
+            },
+          },
+          {
+            Update: {
+              TableName: TABLE_NAME,
+              Key: { PK: userPk(userId), SK: COUNT_SK },
+              UpdateExpression: "ADD monitorCount :minusOne",
+              ConditionExpression: "monitorCount > :zero",
+              ExpressionAttributeValues: { ":minusOne": -1, ":zero": 0 },
+            },
+          },
+          {
+            Delete: {
+              TableName: TABLE_NAME,
+              Key: { PK: monitorKey(monitorId), SK: "INCIDENT#OPEN" },
+            },
+          },
+        ],
+      }),
+    );
+  } catch (err) {
+    if (
+      err instanceof TransactionCanceledException &&
+      err.CancellationReasons?.[0]?.Code === "ConditionalCheckFailed"
+    ) {
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -201,29 +281,19 @@ export async function setMonitorActive(
   // Keep the sparse index in sync: add the GSI keys when resuming, remove them
   // when pausing so paused monitors drop out of the checker's query.
   // `active` is aliased to sidestep any reserved-word issues.
-  const command = active
-    ? new UpdateCommand({
-        TableName: TABLE_NAME,
-        Key: { PK: userPk(userId), SK: monitorSk(monitorId) },
-        UpdateExpression: "SET #active = :active, GSI1PK = :gpk, GSI1SK = :gsk",
-        ConditionExpression: "attribute_exists(PK)",
-        ExpressionAttributeNames: { "#active": "active" },
-        ExpressionAttributeValues: {
-          ":active": true,
-          ":gpk": ACTIVE_INDEX_PK,
-          ":gsk": monitorSk(monitorId),
-        },
-        ReturnValues: "ALL_NEW" as const,
-      })
-    : new UpdateCommand({
-        TableName: TABLE_NAME,
-        Key: { PK: userPk(userId), SK: monitorSk(monitorId) },
-        UpdateExpression: "SET #active = :active REMOVE GSI1PK, GSI1SK",
-        ConditionExpression: "attribute_exists(PK)",
-        ExpressionAttributeNames: { "#active": "active" },
-        ExpressionAttributeValues: { ":active": false },
-        ReturnValues: "ALL_NEW" as const,
-      });
+  const command = new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { PK: userPk(userId), SK: monitorSk(monitorId) },
+    UpdateExpression: active
+      ? "SET #active = :active, GSI1PK = :gpk, GSI1SK = :gsk"
+      : "SET #active = :active REMOVE GSI1PK, GSI1SK",
+    ConditionExpression: "attribute_exists(PK)",
+    ExpressionAttributeNames: { "#active": "active" },
+    ExpressionAttributeValues: active
+      ? { ":active": true, ":gpk": ACTIVE_INDEX_PK, ":gsk": monitorSk(monitorId) }
+      : { ":active": false },
+    ReturnValues: "ALL_NEW",
+  });
 
   try {
     const result = await db.send(command);

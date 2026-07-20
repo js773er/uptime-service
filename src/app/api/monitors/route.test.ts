@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Monitor } from "@/types";
 
 vi.mock("@/lib/auth", () => ({ getUserId: vi.fn() }));
-vi.mock("@/lib/monitors", () => ({
+vi.mock("@/lib/monitors", async (importOriginal) => ({
+  // Keep the real MonitorLimitError (and constants); stub only the IO.
+  ...(await importOriginal<typeof import("@/lib/monitors")>()),
   getMonitorsByUser: vi.fn(),
   createMonitor: vi.fn(),
 }));
@@ -13,7 +15,11 @@ vi.mock("@clerk/nextjs/server", () => ({
 }));
 
 import { getUserId } from "@/lib/auth";
-import { createMonitor, getMonitorsByUser } from "@/lib/monitors";
+import {
+  createMonitor,
+  getMonitorsByUser,
+  MonitorLimitError,
+} from "@/lib/monitors";
 import { GET, POST } from "./route";
 
 const sampleMonitor = (over: Partial<Monitor> = {}): Monitor => ({
@@ -109,13 +115,12 @@ describe("POST /api/monitors", () => {
     expect(createMonitor).not.toHaveBeenCalled();
   });
 
-  it("returns 403 when the user is at the 5-monitor limit", async () => {
-    vi.mocked(getMonitorsByUser).mockResolvedValue(
-      Array.from({ length: 5 }, (_, i) => sampleMonitor({ monitorId: `m${i}` })),
-    );
+  it("returns 403 when the data layer reports the monitor limit", async () => {
+    vi.mocked(createMonitor).mockRejectedValue(new MonitorLimitError());
 
     const res = await POST(postRequest({ name: "Site", url: "https://example.com" }));
     expect(res.status).toBe(403);
-    expect(createMonitor).not.toHaveBeenCalled();
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/limit/);
   });
 });

@@ -180,3 +180,54 @@ keep it current and in plain language.
   and the Vercel dashboard; the README documents both paths. The $10 AWS
   budget is a console step — CloudFormation budget resources are only
   supported in us-east-1, so documenting beat adding a second-region stack.
+
+## Hardening pass (`feature/hardening`) — post-review fixes
+
+A full-codebase review before deploy surfaced real bugs; fixed in one branch:
+
+- **URL validation bug**: the IPv6 private-prefix checks ran against *domain
+  names* too, so `fda.gov` / `fcbarcelona.com` were rejected. IP checks now
+  live in one exported `isBlockedIpAddress()` and only apply to hosts
+  containing `:` (IPv6 literals), plus IPv4-mapped-IPv6 handling in both
+  dotted and hex spellings (URL parsers canonicalize `::ffff:10.0.0.1` to
+  `::ffff:a00:1`).
+- **DNS rebinding defence**: validation happens at create time but DNS can
+  change afterwards, so the checker now re-resolves the hostname before every
+  probe and refuses to fetch anything that resolves to a private/reserved
+  address — same blocklist, both layers.
+- **Race-proof incidents (redesign)**: the open incident now lives at a fixed
+  key (`INCIDENT#OPEN`). Opening is a conditional put — two overlapping
+  checker runs can't both open one (the loser skips the alert), which kills
+  both duplicate emails and the "stuck open incident suppresses all future
+  alerts" failure. Closing atomically moves it into a time-ordered history key
+  (`INCIDENT#<startedAt>#<id>`) via a transaction. Side benefits: reading the
+  open incident is a single GetItem (was: query the whole incident history
+  with a filter — which could even *miss* the open incident past 1MB), and
+  history queries are DB-ordered with a `Limit` instead of sort-in-memory.
+- **Atomic monitor cap**: the 5-monitor limit moved from a read-then-write
+  count in the route (racy) into the data layer — a per-user counter item
+  updated in the same transaction as the monitor put, with a condition that
+  makes the cap impossible to exceed. The route just maps `MonitorLimitError`
+  to 403; the dashboard imports the same constant.
+- **Data lifecycle**: check results now carry a 30-day TTL (`expiresAt` +
+  `timeToLiveAttribute` on the table) so minutely history stops growing
+  forever and deleted monitors' checks clean themselves up. Deleting a monitor
+  is now a transaction: item + counter + any open incident (no more
+  permanently-"ongoing" incidents for deleted monitors).
+- **Alert config bugs**: the CDK stack injects unset deploy-time vars as `""`,
+  which is not nullish — the alert lambda's `??` fallbacks could never fire.
+  Switched to `||`, and `bin/app.ts` now loads the repo-root `.env.local` at
+  synth time (shell exports still win), so `npm run deploy` actually picks up
+  the Resend keys the docs promised it would.
+- **Status page caching**: `/status/[id]` is public, and `force-dynamic` meant
+  every anonymous hit was a DynamoDB read. Now ISR (`revalidate = 60` —
+  checks only change once a minute). This required moving header auth from a
+  server-side `auth()` in the root layout (which forces *every* route dynamic)
+  into a client `useUser()` component.
+- **UI robustness**: the add form and row actions now surface non-OK responses
+  and network failures instead of silently swallowing them.
+- **Dedup**: one `monitorKey()` builder (was defined 3×), shared
+  `CHECKS_FOR_24H`/`DAY_MS` constants (3×), one `monitorState()` state machine
+  for dashboard + status page (2×), one `formatIncidentCause()` for email +
+  UI (2×), and a `serviceLambda()` factory in the stack. `engines: node>=20.9`
+  pins the runtime family.

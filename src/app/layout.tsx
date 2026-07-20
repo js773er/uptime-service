@@ -1,9 +1,9 @@
-import { ClerkProvider, SignInButton, UserButton } from "@clerk/nextjs";
-import { auth } from "@clerk/nextjs/server";
+import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { NavAuth } from "./nav-auth";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,13 +20,11 @@ export const metadata: Metadata = {
   description: "Monitor your sites and get alerted when they go down",
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { userId } = await auth();
-
   return (
     <ClerkProvider>
       <html
@@ -40,20 +38,7 @@ export default async function RootLayout({
                 ⏱ Uptime
               </Link>
               <nav className="flex items-center gap-4 text-sm">
-                {userId ? (
-                  <>
-                    <Link href="/dashboard" className="hover:underline">
-                      Dashboard
-                    </Link>
-                    <UserButton />
-                  </>
-                ) : (
-                  <SignInButton mode="modal">
-                    <button className="rounded-md bg-zinc-900 px-3 py-1.5 text-white hover:bg-zinc-700">
-                      Sign in
-                    </button>
-                  </SignInButton>
-                )}
+                <NavAuth />
               </nav>
             </div>
           </header>

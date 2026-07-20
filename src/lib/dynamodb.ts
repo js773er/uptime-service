@@ -25,3 +25,10 @@ export const db = DynamoDBDocumentClient.from(client, {
     removeUndefinedValues: true,
   },
 });
+
+/**
+ * Canonical `MONITOR#<id>` key builder. It appears as the partition key of
+ * checks and incidents AND as the monitor's sort/GSI keys — one definition
+ * keeps every entity in the same partition byte-for-byte.
+ */
+export const monitorKey = (monitorId: string) => `MONITOR#${monitorId}`;

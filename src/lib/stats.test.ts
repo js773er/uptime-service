@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   computeUptimePercent,
   formatDuration,
+  formatIncidentCause,
   formatRelativeTime,
+  monitorState,
 } from "@/lib/stats";
 
 const now = new Date("2026-07-18T12:00:00.000Z");
@@ -50,5 +52,22 @@ describe("formatRelativeTime", () => {
     expect(formatRelativeTime(check(2, true).timestamp, now)).toBe("2m ago");
     expect(formatRelativeTime(check(60 * 3, true).timestamp, now)).toBe("3h ago");
     expect(formatRelativeTime(check(60 * 24 * 5, true).timestamp, now)).toBe("5d ago");
+  });
+});
+
+describe("monitorState", () => {
+  it("derives the four states", () => {
+    expect(monitorState({ active: false }, { isUp: true })).toBe("paused");
+    expect(monitorState({ active: true }, null)).toBe("pending");
+    expect(monitorState({ active: true }, { isUp: true })).toBe("up");
+    expect(monitorState({ active: true }, { isUp: false })).toBe("down");
+  });
+});
+
+describe("formatIncidentCause", () => {
+  it("prefers the status code, falls back to the error, then a default", () => {
+    expect(formatIncidentCause(503, "ignored")).toBe("HTTP 503");
+    expect(formatIncidentCause(null, "request timed out")).toBe("request timed out");
+    expect(formatIncidentCause(null, undefined)).toBe("no response");
   });
 });

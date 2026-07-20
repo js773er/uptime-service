@@ -1,4 +1,42 @@
-import type { CheckResult } from "@/types";
+import type { CheckResult, Monitor } from "@/types";
+
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How many newest-first check items to fetch to cover a 24h window of
+ * minutely checks (1440/day plus headroom). Shared by every page that
+ * computes 24h uptime so the dashboard and status page can never disagree.
+ */
+export const CHECKS_FOR_24H = 1500;
+
+export type MonitorState = "paused" | "pending" | "up" | "down";
+
+/**
+ * Single source of truth for a monitor's displayed state; the dashboard and
+ * the public status page both derive from this and only choose wording.
+ */
+export function monitorState(
+  monitor: Pick<Monitor, "active">,
+  lastCheck: Pick<CheckResult, "isUp"> | null,
+): MonitorState {
+  if (!monitor.active) return "paused";
+  if (!lastCheck) return "pending";
+  return lastCheck.isUp ? "up" : "down";
+}
+
+/**
+ * Human-readable cause of a failed check — shared by the alert email and the
+ * incident tables so both describe the same incident the same way.
+ */
+export function formatIncidentCause(
+  statusCode: number | null | undefined,
+  error: string | undefined,
+): string {
+  if (statusCode !== null && statusCode !== undefined) {
+    return `HTTP ${statusCode}`;
+  }
+  return error ?? "no response";
+}
 
 /**
  * Uptime percentage over a trailing window, from raw check results.

@@ -3,15 +3,20 @@ import { getRecentChecks } from "@/lib/checks";
 import { getIncidentsByMonitor } from "@/lib/incidents";
 import { getMonitorByPublicId } from "@/lib/monitors";
 import {
+  CHECKS_FOR_24H,
   computeUptimePercent,
+  DAY_MS,
   formatDuration,
   formatRelativeTime,
+  monitorState,
+  type MonitorState,
 } from "@/lib/stats";
 
-const CHECKS_FOR_24H = 1500;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-export const dynamic = "force-dynamic";
+/**
+ * Checks arrive at most once a minute, so cache each status page for 60s:
+ * anonymous traffic spikes hit the cache, not DynamoDB.
+ */
+export const revalidate = 60;
 
 /**
  * Public, read-only status page — the QR-code / share-link target.
@@ -37,16 +42,13 @@ export default async function StatusPage({
   const uptime = computeUptimePercent(checks, DAY_MS, now);
   const lastCheck = checks[0] ?? null;
 
-  const state = !monitor.active
-    ? {
-        label: "Monitoring paused",
-        className: "bg-zinc-100 text-zinc-600",
-      }
-    : lastCheck === null
-      ? { label: "Awaiting first check", className: "bg-amber-50 text-amber-700" }
-      : lastCheck.isUp
-        ? { label: "Operational", className: "bg-emerald-50 text-emerald-700" }
-        : { label: "Down", className: "bg-red-50 text-red-700" };
+  const banners: Record<MonitorState, { label: string; className: string }> = {
+    paused: { label: "Monitoring paused", className: "bg-zinc-100 text-zinc-600" },
+    pending: { label: "Awaiting first check", className: "bg-amber-50 text-amber-700" },
+    up: { label: "Operational", className: "bg-emerald-50 text-emerald-700" },
+    down: { label: "Down", className: "bg-red-50 text-red-700" },
+  };
+  const state = banners[monitorState(monitor, lastCheck)];
 
   return (
     <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-14">

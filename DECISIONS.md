@@ -23,3 +23,21 @@ keep it current and in plain language.
   range boundaries are exact.
 - `setMonitorActive` and `createMonitor` use DynamoDB condition expressions so a
   missing monitor returns `null` instead of silently creating/upserting.
+
+## Step 2 — Monitor CRUD API (`feature/monitor-api`)
+
+- **Routes** under `src/app/api/monitors`: `GET`/`POST` on the collection,
+  `GET`/`PATCH`/`DELETE` on `[id]`. Thin handlers — validate, call the Step 1
+  lib, map results to status codes (201 create, 403 over limit, 404 missing,
+  204 delete, 400 bad input).
+- **5-monitor cap** enforced in the POST handler by counting the user's existing
+  monitors first; returns 403 with a clear message.
+- **Auth seam** (`src/lib/auth.ts`): `getUserId(request)` currently reads an
+  `x-user-id` header and falls back to a dev user, so every route is testable
+  before Clerk. Step 6 swaps the body for Clerk's `auth()` — handlers don't
+  change.
+- **`getRecentChecks`** (`src/lib/checks.ts`): newest-first by querying the
+  check-result partition backwards (ISO timestamps sort lexicographically), so
+  no GSI is needed. Used by `GET /[id]`.
+- **Tests** mock the data layer and call the handlers directly, asserting status
+  codes for the happy path, validation failures, the limit, and not-found.

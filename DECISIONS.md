@@ -41,3 +41,29 @@ keep it current and in plain language.
   no GSI is needed. Used by `GET /[id]`.
 - **Tests** mock the data layer and call the handlers directly, asserting status
   codes for the happy path, validation failures, the limit, and not-found.
+
+## Step 3 — Checker Lambda (`feature/checker-lambda`)
+
+- **`infrastructure/lambda/checker.ts`** is the EventBridge entry point: list
+  active monitors, probe each URL, write a `CheckResult`, then open/close an
+  incident on a state change. Monitors run via `Promise.allSettled` so one bad
+  URL can't fail the whole batch.
+- **`probeUrl`**: native `fetch` with a 10s `AbortSignal.timeout`. 2xx/3xx = up.
+  Redirects are **not** followed (`redirect: "manual"`) — this keeps 3xx as "up"
+  and stops a redirect from reaching an address the URL validation already
+  blocked (SSRF defence-in-depth). Timeouts/network errors record `isUp: false`
+  with a null status code and an error string.
+- **Incident logic is a pure function** (`incident-logic.ts`,
+  `decideIncidentTransition`) with no IO, so the up->down / down->up transitions
+  are unit-tested directly. The Lambda just wires it to DynamoDB reads/writes.
+  `closeIncident` uses a conditional write (`attribute_not_exists(resolvedAt)`)
+  to avoid double-closing.
+- **Sparse GSI for active monitors** (`GSI1`, keys `GSI1PK/GSI1SK`): only active
+  monitors carry the index keys, so the checker lists them with one `Query`
+  instead of scanning a table that will be dominated by check results. Pausing a
+  monitor removes the keys, dropping it from the index. `createMonitor` /
+  `setMonitorActive` maintain these keys. **Step 5 (CDK) must declare GSI1**, and
+  the Lambda bundler needs tsconfig path aliases (`@/*`) enabled in esbuild.
+- Local end-to-end run (writes + incident open/close against a real table) is
+  deferred to after the Step 5 deploy / DynamoDB Local; the pure logic and
+  `probeUrl` are covered by unit tests now.

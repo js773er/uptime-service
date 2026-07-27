@@ -1,4 +1,4 @@
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { db, TABLE_NAME } from "@/lib/dynamodb";
 import type { CheckResult } from "@/types";
 
@@ -25,6 +25,18 @@ function toCheckResult(item: CheckItem): CheckResult {
     isUp: item.isUp,
     error: item.error,
   };
+}
+
+/** Persist a single check result. */
+export async function writeCheckResult(check: CheckResult): Promise<void> {
+  const item: CheckItem = {
+    PK: monitorPk(check.monitorId),
+    SK: `CHECK#${check.timestamp}`,
+    entityType: "CheckResult",
+    ...check,
+  };
+
+  await db.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
 }
 
 /** Most recent check results for a monitor, newest first. */

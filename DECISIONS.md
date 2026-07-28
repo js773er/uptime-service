@@ -67,3 +67,25 @@ keep it current and in plain language.
 - Local end-to-end run (writes + incident open/close against a real table) is
   deferred to after the Step 5 deploy / DynamoDB Local; the pure logic and
   `probeUrl` are covered by unit tests now.
+
+## Step 4 — Alerting (`feature/alerting`)
+
+- **Alert only on the up->down edge.** The checker enqueues an SQS message when
+  it *opens* an incident — never on every failing check — so one outage means
+  one email, not one per minute.
+- **Shared message contract** (`infrastructure/lambda/queue.ts`): a Zod schema
+  both the producer (checker) and consumer (alert lambda) validate against, so
+  malformed messages fail at the boundary.
+- **Partial batch failures** (`alert.ts`): the consumer returns
+  `batchItemFailures`, so in a batch of 10 only the failed sends are retried.
+  After `maxReceiveCount` retries SQS moves a message to the DLQ. Messages that
+  fail *validation* are also marked failed on purpose — poison messages land in
+  the DLQ where they're visible instead of being silently dropped.
+- **Enqueue is best-effort** in the checker: a queue hiccup logs an error but
+  never fails the check — the incident row is already written either way.
+- **Per-monitor `alertEmail`** (optional, Zod-validated) with an
+  `ALERT_FALLBACK_EMAIL` env fallback in the consumer. Step 6 will default it
+  to the signed-in user's email at creation time.
+- The Resend SDK reports failures via a returned `error` field rather than
+  throwing; the consumer converts that into an exception so the SQS retry/DLQ
+  path actually engages.

@@ -46,6 +46,7 @@ function toMonitor(item: MonitorItem): Monitor {
     name: item.name,
     url: item.url,
     active: item.active,
+    alertEmail: item.alertEmail,
     createdAt: item.createdAt,
   };
 }
@@ -54,6 +55,7 @@ export async function createMonitor(input: {
   userId: string;
   name: string;
   url: string;
+  alertEmail?: string;
 }): Promise<Monitor> {
   const monitor: Monitor = {
     userId: input.userId,
@@ -61,6 +63,7 @@ export async function createMonitor(input: {
     name: input.name,
     url: input.url,
     active: true,
+    alertEmail: input.alertEmail,
     createdAt: new Date().toISOString(),
   };
 

@@ -101,6 +101,7 @@ export const monitorUrlSchema = z
 export const createMonitorSchema = z.object({
   name: z.string().trim().min(1, "name is required").max(100),
   url: monitorUrlSchema,
+  alertEmail: z.email("must be a valid email").optional(),
 });
 
 /** Payload accepted by PATCH /api/monitors/[id] (pause/resume). */

@@ -19,6 +19,8 @@ export interface Monitor {
   url: string;
   /** When false the checker skips this monitor (pause/resume). */
   active: boolean;
+  /** Where downtime alerts are sent; falls back to a service-wide default. */
+  alertEmail?: string;
   /** ISO 8601 timestamp. */
   createdAt: string;
 }

@@ -7,6 +7,7 @@ import {
 import { getActiveMonitors } from "@/lib/monitors";
 import type { CheckResult, Monitor } from "@/types";
 import { decideIncidentTransition } from "./incident-logic";
+import { enqueueIncidentAlert } from "./queue";
 
 /** How long to wait for a monitored URL before treating it as down. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -85,12 +86,33 @@ export async function checkMonitor(
   });
 
   if (transition === "open") {
-    await openIncident({
+    const incident = await openIncident({
       monitorId: monitor.monitorId,
       startedAt: now,
       statusCode: probe.statusCode,
       error: probe.error,
     });
+
+    // Alert only on the up->down edge, never on every failing check.
+    // Best-effort: a queue hiccup must not fail the check itself — the
+    // incident is already recorded either way.
+    try {
+      await enqueueIncidentAlert({
+        incidentId: incident.incidentId,
+        monitorId: monitor.monitorId,
+        monitorName: monitor.name,
+        url: monitor.url,
+        startedAt: now,
+        statusCode: probe.statusCode,
+        error: probe.error,
+        alertEmail: monitor.alertEmail,
+      });
+    } catch (err) {
+      console.error(
+        `failed to enqueue alert for incident ${incident.incidentId}:`,
+        err,
+      );
+    }
   } else if (transition === "close" && openIncidentRecord) {
     await closeIncident(openIncidentRecord, now);
   }

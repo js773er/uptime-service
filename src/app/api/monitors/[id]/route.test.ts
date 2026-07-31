@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Monitor } from "@/types";
 
+vi.mock("@/lib/auth", () => ({ getUserId: vi.fn() }));
 vi.mock("@/lib/monitors", () => ({
   getMonitorById: vi.fn(),
   setMonitorActive: vi.fn(),
@@ -10,6 +11,7 @@ vi.mock("@/lib/checks", () => ({
   getRecentChecks: vi.fn(),
 }));
 
+import { getUserId } from "@/lib/auth";
 import { getRecentChecks } from "@/lib/checks";
 import {
   deleteMonitor,
@@ -19,7 +21,7 @@ import {
 import { DELETE, GET, PATCH } from "./route";
 
 const monitor: Monitor = {
-  userId: "dev-user",
+  userId: "user-1",
   monitorId: "m1",
   name: "Site",
   url: "https://example.com",
@@ -39,9 +41,18 @@ function patchRequest(body: unknown): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getUserId).mockResolvedValue("user-1");
 });
 
 describe("GET /api/monitors/[id]", () => {
+  it("returns 401 when unauthenticated", async () => {
+    vi.mocked(getUserId).mockResolvedValue(null);
+
+    const res = await GET(new Request("http://test/api/monitors/m1"), ctx());
+    expect(res.status).toBe(401);
+    expect(getMonitorById).not.toHaveBeenCalled();
+  });
+
   it("returns the monitor and its recent checks", async () => {
     vi.mocked(getMonitorById).mockResolvedValue(monitor);
     vi.mocked(getRecentChecks).mockResolvedValue([]);
@@ -66,7 +77,7 @@ describe("PATCH /api/monitors/[id]", () => {
 
     const res = await PATCH(patchRequest({ active: false }), ctx());
     expect(res.status).toBe(200);
-    expect(setMonitorActive).toHaveBeenCalledWith("dev-user", "m1", false);
+    expect(setMonitorActive).toHaveBeenCalledWith("user-1", "m1", false);
   });
 
   it("rejects a bad body with 400", async () => {
@@ -89,7 +100,7 @@ describe("DELETE /api/monitors/[id]", () => {
 
     const res = await DELETE(new Request("http://test/api/monitors/m1", { method: "DELETE" }), ctx());
     expect(res.status).toBe(204);
-    expect(deleteMonitor).toHaveBeenCalledWith("dev-user", "m1");
+    expect(deleteMonitor).toHaveBeenCalledWith("user-1", "m1");
   });
 
   it("returns 404 when the monitor is missing", async () => {

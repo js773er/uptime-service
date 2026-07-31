@@ -12,7 +12,10 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 /** GET /api/monitors/[id] — a single monitor plus its recent checks. */
 export async function GET(request: Request, { params }: RouteContext) {
-  const userId = getUserId(request);
+  const userId = await getUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   const { id } = await params;
 
   const monitor = await getMonitorById(userId, id);
@@ -26,7 +29,10 @@ export async function GET(request: Request, { params }: RouteContext) {
 
 /** PATCH /api/monitors/[id] — pause/resume a monitor. */
 export async function PATCH(request: Request, { params }: RouteContext) {
-  const userId = getUserId(request);
+  const userId = await getUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   const { id } = await params;
 
   let body: unknown;
@@ -54,7 +60,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
 /** DELETE /api/monitors/[id] — remove a monitor. */
 export async function DELETE(request: Request, { params }: RouteContext) {
-  const userId = getUserId(request);
+  const userId = await getUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   const { id } = await params;
 
   const monitor = await getMonitorById(userId, id);

@@ -113,3 +113,21 @@ keep it current and in plain language.
   they run in the normal vitest suite and catch config drift.
 - Resend secrets go in as deploy-time env passthrough; noted Secrets Manager
   as the production-grade alternative.
+
+## Step 6 — Auth with Clerk (`feature/auth`)
+
+- **`src/proxy.ts`** (Next 16's middleware convention) runs `clerkMiddleware`:
+  everything is protected except `/`, `/sign-in` and `/status/*` (the public
+  status pages). Page visits redirect to sign-in; API calls get 401.
+- **The Step 2 auth seam paid off**: `getUserId()` swapped its body from the
+  dev header stub to Clerk's `auth()` — route handlers only gained a null
+  check (401). Handlers are defence-in-depth behind the middleware.
+- **Monitors are bound to the Clerk userId** (the table's `USER#<id>` PK), so
+  users can only ever query their own partition — isolation comes from the key
+  design, not filtering.
+- **Alert email defaulting**: on create, if the user didn't specify
+  `alertEmail`, the route fills it from the Clerk account's primary email —
+  downtime alerts work with zero configuration.
+- Tests mock `@/lib/auth` and assert 401s on every route when unauthenticated.
+- Keys live in `.env.local` (see `.env.example`); `next build`/`next dev` need
+  them, typecheck and tests do not.

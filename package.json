@@ -17,6 +17,7 @@
     "@aws-sdk/client-dynamodb": "^3.1050.0",
     "@aws-sdk/client-sqs": "^3.967.0",
     "@aws-sdk/lib-dynamodb": "^3.1050.0",
+    "@clerk/nextjs": "^7.5.20",
     "aws-cdk-lib": "^2.261.0",
     "constructs": "^10.7.0",
     "next": "16.2.6",

@@ -131,3 +131,25 @@ keep it current and in plain language.
 - Tests mock `@/lib/auth` and assert 401s on every route when unauthenticated.
 - Keys live in `.env.local` (see `.env.example`); `next build`/`next dev` need
   them, typecheck and tests do not.
+
+## Step 7 — Dashboard (`feature/dashboard`)
+
+- **Server components read, API routes write.** List and detail pages are
+  server components that call the data layer directly (no self-fetch hop);
+  mutations (create/pause/delete) go through the existing API routes from
+  client components, then `router.refresh()` re-renders the server data.
+- **One schema, both sides**: the add-monitor form validates with the same
+  `createMonitorSchema` the API uses — client and server can't disagree about
+  what a valid monitor is. Server responses (403 limit, Zod issues) surface in
+  the form as a fallback.
+- **Uptime/duration/relative-time helpers** live in `src/lib/stats.ts` as pure
+  functions with unit tests; `computeUptimePercent` returns null (rendered "—")
+  when a monitor has no checks in the window, rather than a misleading 100%.
+- **Chart**: recharts line of the last 24h of response times; failed checks map
+  to `null` so downtime renders as visible gaps instead of fake zeros.
+- **Incident ordering** happens in memory (incident ids are random, not
+  time-sortable) — counts per monitor are tiny, so a sort beats redesigning
+  keys.
+- Clerk v7 dropped `SignedIn`/`SignedOut`; the layout reads `auth()` server-side
+  and branches on `userId`, which also keeps the header out of the client
+  bundle.

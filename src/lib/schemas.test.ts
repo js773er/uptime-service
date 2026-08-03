@@ -44,6 +44,18 @@ describe("getUrlRejectionReason", () => {
     expect(getUrlRejectionReason("https://11.0.0.1")).toBeNull();
   });
 
+  it("does not apply IPv6 prefix checks to domain names", () => {
+    // These start with fd/fc/fe8 but are real public domains.
+    expect(getUrlRejectionReason("https://fda.gov")).toBeNull();
+    expect(getUrlRejectionReason("https://fcbarcelona.com")).toBeNull();
+    expect(getUrlRejectionReason("https://fe8-site.example.com")).toBeNull();
+  });
+
+  it("rejects IPv4-mapped IPv6 forms of private addresses", () => {
+    expect(getUrlRejectionReason("https://[::ffff:192.168.1.1]")).not.toBeNull();
+    expect(getUrlRejectionReason("https://[::ffff:10.0.0.1]")).not.toBeNull();
+  });
+
   it("rejects the cloud metadata link-local address", () => {
     expect(getUrlRejectionReason("https://169.254.169.254")).not.toBeNull();
   });

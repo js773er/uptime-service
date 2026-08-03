@@ -13,7 +13,11 @@ const isPublicRoute = createRouteMatcher([
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
-    await auth.protect();
+    // `protect()` alone answers 404 for signed-out visitors, which reads as a
+    // broken site. Send them to sign-in instead and bring them back after.
+    await auth.protect({
+      unauthenticatedUrl: new URL("/sign-in", request.url).toString(),
+    });
   }
 });
 

@@ -2,15 +2,18 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getUserId } from "@/lib/auth";
 import { getRecentChecks } from "@/lib/checks";
-import { getMonitorsByUser } from "@/lib/monitors";
-import { computeUptimePercent, formatRelativeTime } from "@/lib/stats";
+import { getMonitorsByUser, MAX_MONITORS_PER_USER } from "@/lib/monitors";
+import {
+  CHECKS_FOR_24H,
+  computeUptimePercent,
+  DAY_MS,
+  formatRelativeTime,
+  monitorState,
+  type MonitorState,
+} from "@/lib/stats";
 import type { CheckResult, Monitor } from "@/types";
 import { AddMonitorForm } from "./add-monitor-form";
 import { MonitorActions } from "./monitor-actions";
-
-/** ~24h of minutely checks; a single query page covers it. */
-const CHECKS_FOR_24H = 1500;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const dynamic = "force-dynamic";
 
@@ -20,17 +23,12 @@ interface MonitorRow {
   uptime24h: number | null;
 }
 
-function statusOf(row: MonitorRow): { label: string; className: string } {
-  if (!row.monitor.active) {
-    return { label: "Paused", className: "bg-zinc-100 text-zinc-500" };
-  }
-  if (!row.lastCheck) {
-    return { label: "Pending", className: "bg-amber-100 text-amber-700" };
-  }
-  return row.lastCheck.isUp
-    ? { label: "Up", className: "bg-emerald-100 text-emerald-700" }
-    : { label: "Down", className: "bg-red-100 text-red-700" };
-}
+const BADGES: Record<MonitorState, { label: string; className: string }> = {
+  paused: { label: "Paused", className: "bg-zinc-100 text-zinc-500" },
+  pending: { label: "Pending", className: "bg-amber-100 text-amber-700" },
+  up: { label: "Up", className: "bg-emerald-100 text-emerald-700" },
+  down: { label: "Down", className: "bg-red-100 text-red-700" },
+};
 
 export default async function DashboardPage() {
   const userId = await getUserId();
@@ -56,7 +54,9 @@ export default async function DashboardPage() {
     <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10">
       <div className="flex items-end justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Monitors</h1>
-        <p className="text-sm text-zinc-500">{monitors.length}/5 used</p>
+        <p className="text-sm text-zinc-500">
+          {monitors.length}/{MAX_MONITORS_PER_USER} used
+        </p>
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-lg border border-zinc-200 bg-white">
@@ -79,7 +79,7 @@ export default async function DashboardPage() {
               </tr>
             )}
             {rows.map((row) => {
-              const status = statusOf(row);
+              const status = BADGES[monitorState(row.monitor, row.lastCheck)];
               return (
                 <tr
                   key={row.monitor.monitorId}

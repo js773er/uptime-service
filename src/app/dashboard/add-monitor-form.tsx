@@ -50,6 +50,8 @@ export function AddMonitorForm() {
 
       form.reset();
       router.refresh();
+    } catch {
+      setError("network error — check your connection and try again");
     } finally {
       setSubmitting(false);
     }

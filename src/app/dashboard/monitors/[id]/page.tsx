@@ -5,14 +5,14 @@ import { getRecentChecks } from "@/lib/checks";
 import { getIncidentsByMonitor } from "@/lib/incidents";
 import { getMonitorById } from "@/lib/monitors";
 import {
+  CHECKS_FOR_24H,
   computeUptimePercent,
+  DAY_MS,
   formatDuration,
+  formatIncidentCause,
   formatRelativeTime,
 } from "@/lib/stats";
 import { ResponseTimeChart, type ChartPoint } from "./response-time-chart";
-
-const CHECKS_FOR_24H = 1500;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const dynamic = "force-dynamic";
 
@@ -125,10 +125,7 @@ export default async function MonitorDetailPage({
                       : "ongoing"}
                   </td>
                   <td className="px-4 py-3 text-zinc-500">
-                    {incident.statusCode !== null &&
-                    incident.statusCode !== undefined
-                      ? `HTTP ${incident.statusCode}`
-                      : (incident.error ?? "no response")}
+                    {formatIncidentCause(incident.statusCode, incident.error)}
                   </td>
                   <td className="px-4 py-3">
                     {incident.resolvedAt ? (

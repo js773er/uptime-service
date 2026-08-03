@@ -1,5 +1,6 @@
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from "aws-lambda";
 import { Resend } from "resend";
+import { formatIncidentCause } from "@/lib/stats";
 import { incidentAlertSchema, type IncidentAlert } from "./queue";
 
 /**
@@ -30,10 +31,7 @@ export function formatAlertEmail(alert: IncidentAlert): {
   subject: string;
   text: string;
 } {
-  const reason =
-    alert.statusCode !== null
-      ? `HTTP ${alert.statusCode}`
-      : (alert.error ?? "no response");
+  const reason = formatIncidentCause(alert.statusCode, alert.error);
 
   return {
     subject: `[DOWN] ${alert.monitorName} (${reason})`,
@@ -53,14 +51,16 @@ export function formatAlertEmail(alert: IncidentAlert): {
 async function processRecord(record: SQSRecord): Promise<void> {
   const alert = incidentAlertSchema.parse(JSON.parse(record.body));
 
-  const to = alert.alertEmail ?? process.env.ALERT_FALLBACK_EMAIL;
+  // `||`, not `??`: the CDK stack injects unset vars as empty strings, and
+  // an empty string must still fall through to the defaults.
+  const to = alert.alertEmail || process.env.ALERT_FALLBACK_EMAIL;
   if (!to) {
     throw new Error(
       "no recipient: monitor has no alertEmail and ALERT_FALLBACK_EMAIL is not set",
     );
   }
 
-  const from = process.env.ALERT_FROM_EMAIL ?? "Uptime <onboarding@resend.dev>";
+  const from = process.env.ALERT_FROM_EMAIL || "Uptime <onboarding@resend.dev>";
   const { subject, text } = formatAlertEmail(alert);
 
   // The Resend SDK reports failures via the `error` field rather than

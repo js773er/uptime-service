@@ -39,6 +39,49 @@ function isPrivateIPv4(host: string): boolean {
   return false;
 }
 
+/**
+ * True when a bare address (no brackets) is loopback, private, link-local or
+ * otherwise reserved — for either IP family. Non-IP hostnames return false.
+ * Shared with the checker, which re-checks resolved addresses at fetch time
+ * (DNS rebinding defence).
+ */
+export function isBlockedIpAddress(address: string): boolean {
+  const host = address.toLowerCase();
+
+  // IPv6 literals always contain ":"; domain names never do. Guarding on it
+  // keeps prefix checks from eating real domains like fda.gov.
+  if (host.includes(":")) {
+    // Loopback / unspecified.
+    if (host === "::1" || host === "::") return true;
+    // Unique-local (fc00::/7) and link-local (fe80::/10).
+    if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe8")) {
+      return true;
+    }
+    // IPv4-mapped IPv6 (::ffff:10.0.0.1) smuggling a private IPv4. URL
+    // parsers may canonicalize the tail to hex groups (::ffff:a00:1), so
+    // handle both spellings.
+    if (host.startsWith("::ffff:")) {
+      const tail = host.slice(7);
+      if (tail.includes(".")) {
+        return isPrivateIPv4(tail);
+      }
+      const groups = tail.split(":");
+      if (groups.length === 2) {
+        const hi = Number.parseInt(groups[0], 16);
+        const lo = Number.parseInt(groups[1], 16);
+        if (Number.isInteger(hi) && Number.isInteger(lo)) {
+          return isPrivateIPv4(
+            [hi >> 8, hi & 255, lo >> 8, lo & 255].join("."),
+          );
+        }
+      }
+    }
+    return false;
+  }
+
+  return isPrivateIPv4(host);
+}
+
 const BLOCKED_HOSTNAMES = new Set([
   "localhost",
   "ip6-localhost",
@@ -69,17 +112,7 @@ export function getUrlRejectionReason(raw: string): string | null {
     return "localhost is not allowed";
   }
 
-  // IPv6 loopback / unspecified.
-  if (host === "::1" || host === "::") {
-    return "loopback addresses are not allowed";
-  }
-
-  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
-  if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe8")) {
-    return "private IPv6 ranges are not allowed";
-  }
-
-  if (isPrivateIPv4(host)) {
+  if (isBlockedIpAddress(host)) {
     return "private and reserved IP ranges are not allowed";
   }
 

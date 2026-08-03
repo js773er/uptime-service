@@ -1,116 +1,223 @@
 # uptime-service
 
-A small uptime monitor I built to get hands-on with event-driven AWS. You add
-a URL, it gets checked every minute from Sydney, and you get an email when the
-site goes down. Every monitor also gets a public status page you can share.
+A uptime monitoring service I built. Add a URL and it gets checked every minute from Sydney. If the site goes down, you receive an email notification. Each monitor also has a public status page that can be shared.
 
-Demo: _coming soon_ · Stack: Next.js, TypeScript, DynamoDB, Lambda, SQS,
-EventBridge, CDK, Clerk, Resend
+> **Demo:** Coming soon  
+> **Stack:** Next.js, TypeScript, DynamoDB, AWS Lambda, EventBridge, SQS, CDK, Clerk, Resend
 
-## How it works
+---
 
-EventBridge triggers the checker Lambda once a minute. It loads the active
-monitors from DynamoDB, fetches each URL with a 10 second timeout, and writes
-a check result. When a site transitions from up to down it opens an incident
-and pushes a message onto SQS. The alert Lambda consumes that queue and sends
-the email through Resend. Sends that keep failing get retried and eventually
-land in a dead letter queue rather than disappearing.
+## Features
 
-```mermaid
-flowchart LR
-    EB[EventBridge<br>every minute] --> C[checker Lambda]
-    C --> DB[(DynamoDB)]
-    C -->|new incident| Q[SQS]
-    Q --> A[alert Lambda]
-    A --> R[Resend email]
-    Q -.-> DLQ[(DLQ)]
-    W[Next.js app] --> DB
-```
+- Check websites every minute
+- Email alerts when a site first goes offline
+- Public status pages
+- Pause and resume monitors
+- Automatic incident tracking
+- 30-day history of uptime checks
+- Serverless AWS architecture
+- Infrastructure defined with AWS CDK
 
-The web app is Next.js (App Router) with Clerk for auth. Pages that read data
-are server components talking straight to DynamoDB; creating, pausing and
-deleting monitors goes through API routes validated with Zod. The public
-status page is cached for 60 seconds since checks only arrive once a minute
-anyway.
+---
 
-Alerts only fire on the up-to-down edge, so one outage means one email, not
-one per minute until it recovers.
+## Architecture
 
-## Data model
+Every minute, EventBridge invokes the checker Lambda. The checker queries DynamoDB for active monitors, requests each URL with a 10-second timeout, and stores the result.
 
-Everything lives in one DynamoDB table:
+If a monitor changes from **up** to **down**, the checker creates an incident and sends a message to SQS. A second Lambda processes the queue and sends an email through Resend. Failed deliveries are retried automatically before eventually moving to a dead-letter queue.
 
-| Entity      | PK              | SK                          |
-| ----------- | --------------- | --------------------------- |
-| Monitor     | `USER#<userId>` | `MONITOR#<monitorId>`       |
-| CheckResult | `MONITOR#<id>`  | `CHECK#<isoTime>`           |
-| Incident    | `MONITOR#<id>`  | `INCIDENT#OPEN` or `INCIDENT#<startedAt>#<id>` |
+The frontend is built with **Next.js App Router** and **Clerk** for authentication.
 
-Two indexes on top of that: GSI1 is a sparse index that only contains active
-monitors (the checker queries it instead of scanning the table), and GSI2
-lets the public status page look a monitor up by id alone.
+Pages that only read data use Server Components and access DynamoDB directly. Actions such as creating, deleting or pausing monitors go through API routes, with request validation handled by Zod.
 
-A couple of details I'm happy with: the open incident sits at a fixed sort
-key and is claimed with a conditional write, so two overlapping checker runs
-can't both open one. The 5-monitor limit is enforced by a counter item in the
-same transaction as the create, so concurrent requests can't sneak past it.
-Check results carry a 30 day TTL so the table doesn't grow forever.
+Public status pages are cached for 60 seconds since new check results only arrive once per minute.
 
-Monitor URLs have to be public https. Localhost, private ranges and the cloud
-metadata address are rejected at create time, and the checker re-resolves the
-hostname before every probe in case DNS changed since (rebinding).
+Alerts are edge-triggered, meaning users receive one email when a site goes down instead of repeated notifications every minute.
 
-## Running it locally
+---
 
-You'll need Node 22+, an AWS account, and free accounts with Clerk and Resend.
+## Data Model
+
+The application stores everything in a single DynamoDB table.
+
+| Entity | Partition Key | Sort Key |
+|---------|---------------|----------|
+| Monitor | `USER#<userId>` | `MONITOR#<monitorId>` |
+| Check Result | `MONITOR#<monitorId>` | `CHECK#<timestamp>` |
+| Incident | `MONITOR#<monitorId>` | `INCIDENT#OPEN` or `INCIDENT#<startedAt>#<id>` |
+
+Two GSIs support the main access patterns.
+
+### GSI1
+
+Contains only active monitors, allowing the checker to query monitors without scanning the table.
+
+### GSI2
+
+Allows public status pages to find monitors by monitor ID.
+
+---
+
+## Design Decisions
+
+A few implementation details that helped make the system more reliable:
+
+- Open incidents always use the same sort key and are created with a conditional write, preventing duplicate incidents if two checker executions overlap.
+- The free plan's five-monitor limit is enforced using a counter item updated within the same DynamoDB transaction as monitor creation, preventing race conditions.
+- Check results automatically expire after 30 days using DynamoDB TTL.
+
+For security, only public HTTPS URLs are accepted.
+
+The application rejects:
+
+- localhost
+- private IP ranges
+- link-local addresses
+- cloud metadata endpoints
+
+The checker also performs DNS resolution before every request rather than trusting the hostname resolved during monitor creation, helping protect against DNS rebinding attacks.
+
+---
+
+## Local Development
+
+### Requirements
+
+- Node.js 22+
+- AWS account
+- Clerk account
+- Resend account
+
+Install dependencies:
 
 ```bash
 npm ci
-cp .env.example .env.local   # then fill it in
+```
+
+Copy the environment file:
+
+```bash
+cp .env.example .env.local
+```
+
+Fill in the required environment variables.
+
+Start the development server:
+
+```bash
 npm run dev
 ```
 
-Tests and checks:
+---
+
+## Testing
+
+Run all tests:
 
 ```bash
-npm test            # unit tests + CDK template assertions
+npm test
+```
+
+Type checking:
+
+```bash
 npm run typecheck
+```
+
+Linting:
+
+```bash
 npm run lint
 ```
 
-## Deploying
+---
 
-Infra first (one-time `npx cdk bootstrap` for the account, then):
+## Deployment
+
+Bootstrap your AWS account once:
+
+```bash
+npx cdk bootstrap
+```
+
+Deploy the infrastructure:
 
 ```bash
 npm run deploy
 ```
 
-The deploy reads Resend settings from `.env.local` and prints the table name
-when it finishes. Put that in your Vercel project env along with the Clerk
-and AWS keys, and deploy the frontend from the Vercel dashboard.
+The deployment outputs the DynamoDB table name.
 
-I'd also set a $10 AWS budget alert before leaving it running. Everything is
-on-demand or free tier so it should cost close to nothing, but belt and
-braces.
+Add the following values to your Vercel project before deploying the frontend:
 
-## Env vars
+- AWS credentials
+- Clerk credentials
+- `TABLE_NAME`
 
-See `.env.example`. Short version: Clerk keys for auth, AWS credentials plus
-`TABLE_NAME` for the web app, and `RESEND_API_KEY` / `ALERT_FROM_EMAIL` /
-`ALERT_FALLBACK_EMAIL` which get baked into the alert Lambda at deploy time.
+---
 
-## Decisions
+## Environment Variables
 
-I kept a running log of what I built at each step and why in
-[DECISIONS.md](DECISIONS.md), including a hardening pass at the end where I
-reviewed the whole thing and fixed a validation bug, two race conditions and
-an alerting config bug before deploying.
+See `.env.example` for the complete list.
 
-## Known limitations
+The main variables are:
 
-- Checks run from one region. A network blip between Sydney and the target
-  looks the same as real downtime. Multi-region checking with quorum is the
-  obvious next step.
-- Email is the only alert channel right now.
-- No SSL expiry or content checks yet.
+### Web App
+
+```
+CLERK_*
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+AWS_REGION
+TABLE_NAME
+```
+
+### Alert Lambda
+
+```
+RESEND_API_KEY
+ALERT_FROM_EMAIL
+ALERT_FALLBACK_EMAIL
+```
+
+These values are injected into the Lambda during deployment.
+
+---
+
+## Project Structure
+
+```
+.
+├── app/                 # Next.js App Router
+├── components/
+├── lib/
+├── lambda/
+│   ├── checker/
+│   └── alert/
+├── cdk/
+├── public/
+├── tests/
+└── DECISIONS.md
+```
+
+---
+
+## Future Improvements
+
+Some features I'd like to add:
+
+- Multi-region monitoring
+- Discord and Slack notifications
+- SMS alerts
+- SSL certificate expiry monitoring
+- Content verification
+- Response time graphs
+- Custom check intervals
+- Better analytics
+
+---
+
+
+## Notes
+
+I kept a running development log in `DECISIONS.md` documenting major implementation decisions, trade-offs, and fixes made during development, including several race conditions and validation issues discovered during a final review before deployment.

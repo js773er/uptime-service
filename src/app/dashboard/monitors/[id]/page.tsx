@@ -61,6 +61,12 @@ export default async function MonitorDetailPage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight">{monitor.name}</h1>
           <p className="text-sm text-zinc-500">{monitor.url}</p>
+          <Link
+            href={`/status/${monitor.monitorId}`}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            Public status page →
+          </Link>
         </div>
         <div className="text-right text-sm">
           <p className="text-zinc-500">Uptime (24h)</p>

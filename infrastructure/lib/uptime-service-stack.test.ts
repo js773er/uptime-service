@@ -21,6 +21,7 @@ describe("UptimeServiceStack", () => {
       ],
       GlobalSecondaryIndexes: Match.arrayWith([
         Match.objectLike({ IndexName: "GSI1" }),
+        Match.objectLike({ IndexName: "GSI2" }),
       ]),
     });
   });

@@ -153,3 +153,17 @@ keep it current and in plain language.
 - Clerk v7 dropped `SignedIn`/`SignedOut`; the layout reads `auth()` server-side
   and branches on `userId`, which also keeps the header out of the client
   bundle.
+
+## Step 8 — Public status page (`feature/status-page`)
+
+- **`/status/[id]` is public** (allow-listed in the proxy middleware) and
+  read-only: current state banner, 24h uptime, recent incidents with durations.
+- **New GSI2 (monitor by id)**: the public URL carries only a monitorId, but
+  the base-table key is `USER#<userId>` — so monitors also carry
+  `GSI2PK = MONITOR#<id>` for an id-only lookup. Added to both the data layer
+  and the CDK stack in the same branch (an unguessable UUID in the URL is the
+  access model, same as most status/share links).
+- **The page shows the monitor's name but never its URL** — visitors see
+  whether the service is healthy without learning which endpoint is probed.
+- Checks and incidents were already keyed by `MONITOR#<id>`, so those queries
+  needed no changes — only the monitor lookup did.

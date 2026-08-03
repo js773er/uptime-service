@@ -47,6 +47,13 @@ export class UptimeServiceStack extends Stack {
       sortKey: { name: "GSI1SK", type: AttributeType.STRING },
     });
 
+    // Id-only monitor lookup for the public status page (no user context in
+    // the public URL).
+    table.addGlobalSecondaryIndex({
+      indexName: "GSI2",
+      partitionKey: { name: "GSI2PK", type: AttributeType.STRING },
+    });
+
     // Alerts that keep failing end up here for inspection instead of being
     // retried forever or dropped.
     const alertDlq = new Queue(this, "AlertDlq", {

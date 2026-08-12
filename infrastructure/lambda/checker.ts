@@ -5,9 +5,15 @@ import {
   getOpenIncident,
   openIncident,
 } from "@/lib/incidents";
-import { getActiveMonitors } from "@/lib/monitors";
+import { getActiveMonitors, recordContentAnalysis } from "@/lib/monitors";
 import { isBlockedIpAddress } from "@/lib/schemas";
 import type { CheckResult, Monitor } from "@/types";
+import {
+  analyzeContent,
+  extractText,
+  hashContent,
+  shouldAnalyze,
+} from "./ai/content-analysis";
 import { decideIncidentTransition } from "./incident-logic";
 import { enqueueIncidentAlert } from "./queue";
 
@@ -20,6 +26,8 @@ export interface UrlProbe {
   responseTimeMs: number;
   isUp: boolean;
   error?: string;
+  /** Response body, read only when the caller asked for it. */
+  body?: string;
 }
 
 /**
@@ -48,8 +56,10 @@ async function resolvesToBlockedAddress(url: string): Promise<boolean> {
  */
 export async function probeUrl(
   url: string,
-  timeoutMs = REQUEST_TIMEOUT_MS,
+  options: { timeoutMs?: number; readBody?: boolean } = {},
 ): Promise<UrlProbe> {
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+
   if (await resolvesToBlockedAddress(url)) {
     return {
       statusCode: null,
@@ -68,11 +78,16 @@ export async function probeUrl(
       headers: { "user-agent": "uptime-service-checker/1.0" },
     });
     const responseTimeMs = Math.round(performance.now() - start);
-    return {
-      statusCode: response.status,
-      responseTimeMs,
-      isUp: response.status >= 200 && response.status < 400,
-    };
+    const isUp = response.status >= 200 && response.status < 400;
+
+    // Reading the body costs time and memory, so only do it when a content
+    // check will actually use it.
+    let body: string | undefined;
+    if (options.readBody && isUp) {
+      body = await response.text().catch(() => undefined);
+    }
+
+    return { statusCode: response.status, responseTimeMs, isUp, body };
   } catch (err) {
     const responseTimeMs = Math.round(performance.now() - start);
     const isTimeout = err instanceof Error && err.name === "TimeoutError";
@@ -90,6 +105,67 @@ export async function probeUrl(
 }
 
 /**
+ * Run the semantic content check when it's enabled, the page is HTTP-healthy,
+ * and the throttle allows it. Any failure degrades to "no verdict" — the HTTP
+ * result still stands, so the monitor keeps working without the model.
+ */
+async function runContentCheck(
+  monitor: Monitor,
+  probe: UrlProbe,
+  now: string,
+): Promise<{ healthy?: boolean; reason?: string }> {
+  if (!probe.body) {
+    return {};
+  }
+
+  const bodyText = extractText(probe.body);
+  if (!bodyText) {
+    return {};
+  }
+
+  const currentHash = hashContent(bodyText);
+  const analyze = shouldAnalyze({
+    contentCheckEnabled: monitor.contentCheck === true,
+    httpIsUp: probe.isUp,
+    currentHash,
+    previousHash: monitor.contentHash,
+    lastAnalyzedAt: monitor.contentAnalyzedAt,
+    now: new Date(now),
+  });
+  if (!analyze) {
+    return {};
+  }
+
+  const verdict = await analyzeContent({
+    monitorName: monitor.name,
+    url: monitor.url,
+    statusCode: probe.statusCode,
+    bodyText,
+  });
+  if (!verdict) {
+    return {};
+  }
+
+  // Best-effort bookkeeping: losing the throttle state costs an extra call
+  // later, never a missed check.
+  try {
+    await recordContentAnalysis({
+      userId: monitor.userId,
+      monitorId: monitor.monitorId,
+      contentHash: currentHash,
+      analyzedAt: now,
+    });
+  } catch (err) {
+    console.error(
+      `failed to record content analysis for ${monitor.monitorId}:`,
+      err,
+    );
+  }
+
+  return { healthy: verdict.healthy, reason: verdict.reason };
+}
+
+/**
  * Check one monitor: record the result, then open/close an incident if the
  * up/down state changed.
  */
@@ -97,15 +173,24 @@ export async function checkMonitor(
   monitor: Monitor,
   now: string,
 ): Promise<void> {
-  const probe = await probeUrl(monitor.url);
+  const contentCheckEnabled = monitor.contentCheck === true;
+  const probe = await probeUrl(monitor.url, { readBody: contentCheckEnabled });
+
+  const content = await runContentCheck(monitor, probe, now);
+
+  // A page that answers 200 with an error inside it is down from the user's
+  // point of view, so the content verdict can override the HTTP verdict.
+  const isUp = probe.isUp && content.healthy !== false;
 
   const check: CheckResult = {
     monitorId: monitor.monitorId,
     timestamp: now,
     statusCode: probe.statusCode,
     responseTimeMs: probe.responseTimeMs,
-    isUp: probe.isUp,
-    error: probe.error,
+    isUp,
+    error: probe.error ?? (content.healthy === false ? content.reason : undefined),
+    contentHealthy: content.healthy,
+    contentReason: content.reason,
   };
   await writeCheckResult(check);
 

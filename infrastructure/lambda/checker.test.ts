@@ -63,7 +63,7 @@ describe("probeUrl", () => {
     timeout.name = "TimeoutError";
     vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
 
-    const probe = await probeUrl("https://example.com", 10);
+    const probe = await probeUrl("https://example.com", { timeoutMs: 10 });
     expect(probe.isUp).toBe(false);
     expect(probe.statusCode).toBeNull();
     expect(probe.error).toBe("request timed out");

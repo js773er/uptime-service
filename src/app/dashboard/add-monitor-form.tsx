@@ -24,6 +24,7 @@ export function AddMonitorForm() {
     const parsed = createMonitorSchema.safeParse({
       name: String(data.get("name") ?? ""),
       url: String(data.get("url") ?? ""),
+      contentCheck: data.get("contentCheck") === "on",
       ...(alertEmail ? { alertEmail } : {}),
     });
     if (!parsed.success) {
@@ -70,6 +71,15 @@ export function AddMonitorForm() {
         placeholder="Alert email (optional — defaults to your account email)"
         className={inputClass}
       />
+      <label className="flex items-start gap-2 text-sm text-zinc-600">
+        <input type="checkbox" name="contentCheck" className="mt-1" />
+        <span>
+          Check page content
+          <span className="block text-xs text-zinc-500">
+            Flags pages that load but show an error or maintenance notice.
+          </span>
+        </span>
+      </label>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button
         type="submit"

@@ -40,6 +40,10 @@ export default async function MonitorDetailPage({
   const now = new Date();
   const uptime = computeUptimePercent(checks, DAY_MS, now);
   const lastCheck = checks[0] ?? null;
+  // Content is analysed on a throttle, so the newest verdict is usually older
+  // than the newest check.
+  const contentCheck =
+    checks.find((c) => c.contentHealthy !== undefined) ?? null;
 
   // Oldest -> newest for the chart; failed checks become gaps in the line.
   const chartData: ChartPoint[] = [...checks].reverse().map((c) => ({
@@ -86,6 +90,24 @@ export default async function MonitorDetailPage({
             </p>
           )}
         </div>
+
+        {contentCheck && (
+          <div
+            className={`mt-4 rounded-md px-4 py-3 text-sm ${
+              contentCheck.contentHealthy
+                ? "bg-zinc-50 text-zinc-600"
+                : "bg-red-50 text-red-800"
+            }`}
+          >
+            <p className="font-medium">
+              {contentCheck.contentHealthy
+                ? "Page content looks healthy"
+                : "Page loads, but the content looks wrong"}
+            </p>
+            <p className="mt-0.5 opacity-90">{contentCheck.contentReason}</p>
+          </div>
+        )}
+
         <div className="mt-4">
           <ResponseTimeChart data={chartData} />
         </div>

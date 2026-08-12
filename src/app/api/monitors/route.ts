@@ -52,6 +52,7 @@ export async function POST(request: Request) {
       name: parsed.data.name,
       url: parsed.data.url,
       alertEmail,
+      contentCheck: parsed.data.contentCheck,
     });
     return NextResponse.json({ monitor }, { status: 201 });
   } catch (err) {

@@ -9,7 +9,13 @@ vi.mock("resend", () => ({
     emails = { send: sendMock };
   },
 }));
+vi.mock("./ai/correlate", async (importOriginal) => ({
+  // Keep MIN_ALERTS_TO_CORRELATE real; stub only the model call.
+  ...(await importOriginal<typeof import("./ai/correlate")>()),
+  correlateAlerts: vi.fn(),
+}));
 
+import { correlateAlerts } from "./ai/correlate";
 import { formatAlertEmail, handler } from "./alert";
 
 const alert: IncidentAlert = {
@@ -33,6 +39,8 @@ function sqsEvent(...bodies: string[]): SQSEvent {
 beforeEach(() => {
   sendMock.mockReset();
   sendMock.mockResolvedValue({ data: { id: "email-1" }, error: null });
+  // Default: no correlation available, so each incident emails individually.
+  vi.mocked(correlateAlerts).mockReset().mockResolvedValue(null);
   process.env.RESEND_API_KEY = "test-key";
 });
 
@@ -93,6 +101,89 @@ describe("handler", () => {
 
     expect(sendMock).not.toHaveBeenCalled();
     expect(result.batchItemFailures).toEqual([{ itemIdentifier: "msg-0" }]);
+  });
+});
+
+describe("alert correlation", () => {
+  const second: IncidentAlert = {
+    ...alert,
+    incidentId: "inc-2",
+    monitorId: "m2",
+    monitorName: "API",
+    url: "https://api.example.com",
+  };
+
+  it("sends one combined email when several incidents share a recipient", async () => {
+    vi.mocked(correlateAlerts).mockResolvedValue({
+      subject: "2 services down — both on example.com",
+      summary: "Both failures are on the same domain returning 503.",
+    });
+
+    const result = await handler(
+      sqsEvent(JSON.stringify(alert), JSON.stringify(second)),
+    );
+
+    expect(correlateAlerts).toHaveBeenCalledOnce();
+    expect(sendMock).toHaveBeenCalledOnce();
+    const sent = sendMock.mock.calls[0][0];
+    expect(sent.subject).toBe("[DOWN] 2 services down — both on example.com");
+    // The body carries the model's summary plus the raw facts.
+    expect(sent.text).toContain("same domain returning 503");
+    expect(sent.text).toContain("My site");
+    expect(sent.text).toContain("API");
+    expect(result.batchItemFailures).toEqual([]);
+  });
+
+  it("falls back to one email each when correlation is unavailable", async () => {
+    vi.mocked(correlateAlerts).mockResolvedValue(null);
+
+    const result = await handler(
+      sqsEvent(JSON.stringify(alert), JSON.stringify(second)),
+    );
+
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    expect(result.batchItemFailures).toEqual([]);
+  });
+
+  it("does not correlate a single incident", async () => {
+    await handler(sqsEvent(JSON.stringify(alert)));
+
+    expect(correlateAlerts).not.toHaveBeenCalled();
+    expect(sendMock).toHaveBeenCalledOnce();
+  });
+
+  it("never mixes recipients into one email", async () => {
+    const otherTenant: IncidentAlert = {
+      ...second,
+      alertEmail: "someone-else@example.com",
+    };
+
+    await handler(
+      sqsEvent(JSON.stringify(alert), JSON.stringify(otherTenant)),
+    );
+
+    // Two separate recipients — each below the correlation threshold.
+    expect(correlateAlerts).not.toHaveBeenCalled();
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    const recipients = sendMock.mock.calls.map((c) => c[0].to).sort();
+    expect(recipients).toEqual(["owner@example.com", "someone-else@example.com"]);
+  });
+
+  it("retries every incident in the group when the combined send fails", async () => {
+    vi.mocked(correlateAlerts).mockResolvedValue({
+      subject: "2 services down",
+      summary: "Shared cause.",
+    });
+    sendMock.mockResolvedValue({ data: null, error: { message: "rate limited" } });
+
+    const result = await handler(
+      sqsEvent(JSON.stringify(alert), JSON.stringify(second)),
+    );
+
+    expect(result.batchItemFailures).toEqual([
+      { itemIdentifier: "msg-0" },
+      { itemIdentifier: "msg-1" },
+    ]);
   });
 });
 

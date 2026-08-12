@@ -231,3 +231,66 @@ A full-codebase review before deploy surfaced real bugs; fixed in one branch:
   for dashboard + status page (2×), one `formatIncidentCause()` for email +
   UI (2×), and a `serviceLambda()` factory in the stack. `engines: node>=20.9`
   pins the runtime family.
+
+## AI features (`feature/ai-analysis`)
+
+Two features, both chosen because a language model does something rules can't —
+not to have AI in the project.
+
+### Semantic content checking
+
+- **The problem**: a status code only proves the server answered. A deploy that
+  breaks the checkout button still returns 200, and uptime tools call that
+  healthy. Keyword checks don't solve it either — they require knowing which
+  string to look for, and nobody predicts the wording of a failure they haven't
+  had yet.
+- **The approach**: when a monitor opts in, the checker reads the body, strips
+  markup, and asks the model whether the page looks like a working product page
+  or an error/maintenance/empty one. A "not healthy" verdict overrides the HTTP
+  verdict and opens an incident, because from the user's side the site is down.
+- **Why this is the right use of an LLM**: the failure space is open-ended
+  (stack traces, "be right back", blank shells, rate-limit pages) but "this
+  looks wrong" is obvious to a human. That's a semantic judgment, which is
+  exactly what rules can't express and a model can.
+- **Cost control is the real design work.** Analysing every check would be
+  ~43,000 model calls per monitor per month. Instead: only when the page is
+  HTTP-healthy (a 500 is already known-down), only when a content hash shows
+  the page actually changed, and at most once an hour per monitor. The steady
+  state — an unchanged page — costs nothing. The policy lives in a pure
+  `shouldAnalyze()` function so it's unit-tested without touching the API.
+- The throttle state (`contentHash`, `contentAnalyzedAt`) lives on the monitor
+  item, which the checker already has in memory from its work-list query — so
+  reading it is free, and it's only written when an analysis actually runs.
+
+### Alert correlation
+
+- **The problem**: five services failing at once produces five emails, and the
+  reader has to work out at 3am that they share one cause. That's how people
+  learn to ignore alert channels. Paging tools call the fix alert correlation.
+- **The approach**: the SQS consumer groups a batch by recipient and, when a
+  recipient has 2+ incidents, asks the model what they have in common — same
+  domain, same provider, same status code, same timing — and sends **one**
+  email leading with that. Added a 20s `maxBatchingWindow` so incidents from
+  one checker run actually arrive in the same batch; that's well inside the
+  1-minute check interval, so alerting stays sub-minute.
+- **Grouped by recipient before correlating**, so one tenant's monitors can
+  never appear in another tenant's email.
+- Failure of the combined send fails *every* message in that group, so they
+  retry together rather than some incidents silently vanishing.
+
+### Cross-cutting decisions
+
+- **Both features degrade to nothing.** No API key, a failed call, a malformed
+  reply, a refusal — every path returns null and the system falls back to the
+  plain HTTP verdict and one-email-per-incident. A monitoring product must not
+  stop monitoring because a third-party API is down.
+- **The model output is validated with Zod**, exactly like the SQS message
+  contract and the API request bodies. The API constrains the shape via
+  structured outputs; Zod is still the boundary check, because an LLM is an
+  external service like any other.
+- **Where I deliberately did *not* use a model**: up/down is decided by the
+  status code, because that's a deterministic answer and a model would be
+  slower, costlier, and less predictable. Same reasoning for the incident state
+  machine — it stays a pure function.
+- Model is `claude-opus-5`, overridable via `ANTHROPIC_MODEL` without a code
+  change, so cost/latency can be tuned by config.

@@ -104,6 +104,10 @@ export class UptimeServiceStack extends Stack {
       environment: {
         TABLE_NAME: table.tableName,
         ALERT_QUEUE_URL: alertQueue.queueUrl,
+        // Empty when unset: the AI content check is optional and the checker
+        // falls back to the plain HTTP verdict without it.
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
+        ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? "",
       },
     });
 
@@ -117,6 +121,8 @@ export class UptimeServiceStack extends Stack {
         RESEND_API_KEY: process.env.RESEND_API_KEY ?? "",
         ALERT_FROM_EMAIL: process.env.ALERT_FROM_EMAIL ?? "",
         ALERT_FALLBACK_EMAIL: process.env.ALERT_FALLBACK_EMAIL ?? "",
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
+        ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? "",
       },
     });
 
@@ -125,6 +131,10 @@ export class UptimeServiceStack extends Stack {
     alert.addEventSource(
       new SqsEventSource(alertQueue, {
         batchSize: 10,
+        // Wait briefly so incidents from one checker run arrive together and
+        // can be correlated into a single email. The delay is bounded by the
+        // 1-minute check interval, so alerting stays sub-minute.
+        maxBatchingWindow: Duration.seconds(20),
         reportBatchItemFailures: true,
       }),
     );

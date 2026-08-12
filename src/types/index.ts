@@ -21,6 +21,12 @@ export interface Monitor {
   active: boolean;
   /** Where downtime alerts are sent; falls back to a service-wide default. */
   alertEmail?: string;
+  /** Opt in to semantic content checking (catches 200-but-broken pages). */
+  contentCheck?: boolean;
+  /** Fingerprint of the page text when it was last analysed. */
+  contentHash?: string;
+  /** ISO 8601 timestamp of the last content analysis (throttling input). */
+  contentAnalyzedAt?: string;
   /** ISO 8601 timestamp. */
   createdAt: string;
 }
@@ -34,10 +40,17 @@ export interface CheckResult {
   statusCode: number | null;
   /** Round-trip time in milliseconds. */
   responseTimeMs: number;
-  /** True for 2xx/3xx responses. */
+  /** True when the monitor is considered up: 2xx/3xx and content looks sane. */
   isUp: boolean;
   /** Present when the check failed before/without an HTTP response. */
   error?: string;
+  /**
+   * Verdict from semantic content analysis, when one ran on this check.
+   * Absent means content wasn't analysed — not that it passed.
+   */
+  contentHealthy?: boolean;
+  /** One-line explanation behind `contentHealthy`. */
+  contentReason?: string;
 }
 
 /** An open or resolved period of downtime for a monitor. */

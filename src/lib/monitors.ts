@@ -78,6 +78,7 @@ export async function createMonitor(input: {
   name: string;
   url: string;
   alertEmail?: string;
+  contentCheck?: boolean;
 }): Promise<Monitor> {
   const monitor: Monitor = {
     userId: input.userId,
@@ -86,6 +87,7 @@ export async function createMonitor(input: {
     url: input.url,
     active: true,
     alertEmail: input.alertEmail,
+    contentCheck: input.contentCheck,
     createdAt: new Date().toISOString(),
   };
 
@@ -267,6 +269,36 @@ export async function deleteMonitor(
     }
     throw err;
   }
+}
+
+/**
+ * Record the outcome of a content analysis on the monitor item. Stored here
+ * rather than derived from check history so the checker gets the throttling
+ * state for free — the monitor is already in memory from its work-list query.
+ */
+export async function recordContentAnalysis(input: {
+  userId: string;
+  monitorId: string;
+  contentHash: string;
+  analyzedAt: string;
+}): Promise<void> {
+  await db.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: {
+        PK: userPk(input.userId),
+        SK: monitorSk(input.monitorId),
+      },
+      UpdateExpression:
+        "SET contentHash = :hash, contentAnalyzedAt = :analyzedAt",
+      // Skip silently if the monitor was deleted mid-check.
+      ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeValues: {
+        ":hash": input.contentHash,
+        ":analyzedAt": input.analyzedAt,
+      },
+    }),
+  );
 }
 
 /**

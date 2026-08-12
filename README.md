@@ -2,7 +2,7 @@
 
 A small uptime monitoring service. Add a URL and it gets checked every minute from Sydney. If the site goes down, you receive an email notification. Each monitor also has a public status page that can be shared.
 
-> **Demo:** Coming soon  
+> **Live:** [uptime-service.vercel.app](https://uptime-service.vercel.app)  
 > **Stack:** Next.js, TypeScript, DynamoDB, AWS Lambda, EventBridge, SQS, CDK, Clerk, Resend
 
 ---
@@ -13,7 +13,8 @@ A small uptime monitoring service. Add a URL and it gets checked every minute fr
 - Email alerts when a site first goes offline
 - Public status pages
 - Pause and resume monitors
-- Automatic incident tracking
+- Automatic incident tracking with durations
+- Response-time charts and incident history per monitor
 - 30-day history of uptime checks
 - Serverless AWS architecture
 - Infrastructure defined with AWS CDK
@@ -188,17 +189,20 @@ These values are injected into the Lambda during deployment.
 
 ```
 .
-├── app/                 # Next.js App Router
-├── components/
-├── lib/
-├── lambda/
-│   ├── checker/
-│   └── alert/
-├── cdk/
-├── public/
-├── tests/
+├── src/
+│   ├── app/              # Next.js App Router (pages + API routes)
+│   ├── lib/              # data access, validation, stats
+│   ├── types/
+│   └── proxy.ts          # Clerk middleware
+├── infrastructure/
+│   ├── bin/              # CDK app entry point
+│   ├── lib/              # the stack definition
+│   └── lambda/           # checker.ts, alert.ts, queue.ts
 └── DECISIONS.md
 ```
+
+Tests live next to the code they cover as `*.test.ts`, rather than in a
+separate tree.
 
 ---
 
@@ -206,14 +210,12 @@ These values are injected into the Lambda during deployment.
 
 Some features I'd like to add:
 
-- Multi-region monitoring
+- Content verification — catch pages that return 200 but render an error
+- Multi-region checking, so one bad network path can't fake an outage
+- An external heartbeat, since the service can't detect its own checker stalling
 - Discord and Slack notifications
-- SMS alerts
-- SSL certificate expiry monitoring
-- Content verification
-- Response time graphs
-- Custom check intervals
-- Better analytics
+- SSL certificate expiry warnings
+- Custom check intervals per monitor
 
 
 ---

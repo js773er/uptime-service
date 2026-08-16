@@ -294,3 +294,35 @@ not to have AI in the project.
   machine — it stays a pure function.
 - Model is `claude-opus-5`, overridable via `ANTHROPIC_MODEL` without a code
   change, so cost/latency can be tuned by config.
+
+### Four bugs found reviewing the feature before it went live
+
+Worth knowing in detail — the first two made the feature actively worse than
+not having it, and both passed the original test suite.
+
+1. **The incident state machine read the raw HTTP verdict.** `CheckResult`
+   recorded `isUp: false` for a broken page, but `decideIncidentTransition`
+   was still passed `probe.isUp`, so no incident ever opened and no alert was
+   ever sent. The feature detected outages and then silently discarded them.
+2. **The verdict evaporated after one check.** It was stored per-check but not
+   on the monitor, so the next check — throttled, no fresh verdict — fell back
+   to the HTTP result and closed the incident 60 seconds after opening it.
+   And because the hash comparison sits *before* the throttle, an unchanged
+   broken page was never re-analysed: one minute of alarm, then silence while
+   the site stayed down. Fixed by storing the verdict next to the hash it
+   belongs to and carrying it forward while the content is unchanged.
+3. **Content incidents reported "HTTP 200".** The incident and alert were
+   built from `probe.statusCode`/`probe.error`, so the email read
+   `[DOWN] Shop (HTTP 200)` and dropped the actual reason. Content failures
+   now report `statusCode: null` and the model's explanation.
+4. **The body read was unbounded and untyped.** `response.text()` pulled an
+   entire response into a 256MB Lambda with no cap and no content-type check —
+   one monitor pointed at a large file would exhaust memory and take every
+   other monitor in that invocation down with it. Now capped at 512KB,
+   streamed, cancelled early, and restricted to textual content types.
+
+The lesson worth repeating out loud: every one of these was a **seam** bug —
+each individual function was correct, and the defects lived in what got passed
+between them. That is exactly what unit tests with mocked neighbours are worst
+at catching, which is the honest argument for the integration tests this
+project still lacks.

@@ -324,5 +324,45 @@ not having it, and both passed the original test suite.
 The lesson worth repeating out loud: every one of these was a **seam** bug —
 each individual function was correct, and the defects lived in what got passed
 between them. That is exactly what unit tests with mocked neighbours are worst
-at catching, which is the honest argument for the integration tests this
-project still lacks.
+at catching, which is what pushed me to add the integration suite below.
+
+## Integration tests (`feature/ai-analysis`)
+
+- **Why**: the 90 unit tests all mock the data layer, so the parts I was most
+  confident about — the conditional write on `INCIDENT#OPEN`, the transactional
+  monitor cap — had never actually run against DynamoDB. "I reasoned about it"
+  is not the same as "it works."
+- **Setup**: DynamoDB Local as a Java process (no Docker needed), launched from
+  a vitest `globalSetup`. Separate config and `npm run test:integration`, so
+  the unit suite stays fast and dependency-free. `DYNAMODB_ENDPOINT` on the
+  shared client points it at localhost; unset everywhere else.
+- **What they prove**, none of which a mock can: five concurrent `openIncident`
+  calls yield exactly one winner; four concurrent creates against the last free
+  slot yield exactly one monitor; `closeIncident` is idempotent on retry;
+  pausing removes a monitor from GSI1 rather than filtering it after the read;
+  deleting frees a counter slot; one user's `getMonitorById` can't reach
+  another's partition.
+- **I checked the tests can fail.** Deleting the `ConditionExpression` from
+  `openIncident` makes the race test report 5 winners instead of 1. A test that
+  has never failed isn't evidence of anything.
+- The table schema in `local-table.ts` is maintained by hand against the CDK
+  stack. That duplication is the weak point — an index added in one and not the
+  other would give green tests against a schema production doesn't have.
+
+## Self-monitoring (`feature/ai-analysis`)
+
+A monitoring product with no monitoring of its own is a bad look, and more to
+the point I had no way to know if the checker died.
+
+- Six CloudWatch alarms on an SNS topic: checker errors, checker p95 duration
+  approaching the 30s timeout, alert-consumer errors, DLQ depth, alert queue
+  backlog, and — the important one — **checker invocations dropping toward
+  zero**.
+- That last alarm is the only one that catches the failure mode that matters
+  most. If EventBridge stops delivering, nothing throws, nothing retries, and
+  every monitor silently stops being checked. It's set to `breaching` on
+  missing data, because "no data" is exactly the symptom.
+- This still doesn't cover the whole system: alarms run in the same AWS
+  account, so a regional problem takes out the watcher and the watched
+  together. The real fix is an external heartbeat (dead man's switch) —
+  documented as a known limitation rather than pretended away.

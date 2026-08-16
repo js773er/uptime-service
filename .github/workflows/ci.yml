@@ -19,3 +19,19 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run synth -- --quiet
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # DynamoDB Local runs as a Java process, not a container.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm run test:integration

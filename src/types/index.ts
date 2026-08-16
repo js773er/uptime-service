@@ -27,6 +27,14 @@ export interface Monitor {
   contentHash?: string;
   /** ISO 8601 timestamp of the last content analysis (throttling input). */
   contentAnalyzedAt?: string;
+  /**
+   * Verdict from the last analysis. Kept on the monitor because it is a
+   * property of `contentHash`: while the page is unchanged the verdict still
+   * applies, and without it a detected outage would clear on the next check.
+   */
+  contentHealthy?: boolean;
+  /** One-line explanation behind `contentHealthy`. */
+  contentReason?: string;
   /** ISO 8601 timestamp. */
   createdAt: string;
 }

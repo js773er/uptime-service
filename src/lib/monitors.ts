@@ -281,6 +281,8 @@ export async function recordContentAnalysis(input: {
   monitorId: string;
   contentHash: string;
   analyzedAt: string;
+  healthy: boolean;
+  reason: string;
 }): Promise<void> {
   await db.send(
     new UpdateCommand({
@@ -289,13 +291,18 @@ export async function recordContentAnalysis(input: {
         PK: userPk(input.userId),
         SK: monitorSk(input.monitorId),
       },
+      // The verdict is stored alongside the hash it belongs to, so a later
+      // check with unchanged content can reuse it instead of losing it.
       UpdateExpression:
-        "SET contentHash = :hash, contentAnalyzedAt = :analyzedAt",
+        "SET contentHash = :hash, contentAnalyzedAt = :analyzedAt, " +
+        "contentHealthy = :healthy, contentReason = :reason",
       // Skip silently if the monitor was deleted mid-check.
       ConditionExpression: "attribute_exists(PK)",
       ExpressionAttributeValues: {
         ":hash": input.contentHash,
         ":analyzedAt": input.analyzedAt,
+        ":healthy": input.healthy,
+        ":reason": input.reason,
       },
     }),
   );

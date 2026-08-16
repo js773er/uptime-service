@@ -11,12 +11,21 @@ import {
   BillingMode,
   Table,
 } from "aws-cdk-lib/aws-dynamodb";
+import {
+  Alarm,
+  ComparisonOperator,
+  Metric,
+  TreatMissingData,
+} from "aws-cdk-lib/aws-cloudwatch";
+import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Rule, Schedule } from "aws-cdk-lib/aws-events";
 import { LambdaFunction } from "aws-cdk-lib/aws-events-targets";
 import { Architecture, Runtime } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
+import { Topic } from "aws-cdk-lib/aws-sns";
+import { EmailSubscription } from "aws-cdk-lib/aws-sns-subscriptions";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
 
@@ -150,7 +159,112 @@ export class UptimeServiceStack extends Stack {
     table.grantReadWriteData(checker);
     alertQueue.grantSendMessages(checker);
 
+    // Nothing else watches this service, so it has to watch itself. Without
+    // these, the checker could stop running and the first sign would be a
+    // customer asking why they never got paged.
+    const ops = new Topic(this, "OpsAlarms", {
+      displayName: "Uptime service alarms",
+    });
+    if (process.env.OPS_ALARM_EMAIL) {
+      ops.addSubscription(new EmailSubscription(process.env.OPS_ALARM_EMAIL));
+    }
+
+    const alarm = (
+      id: string,
+      metric: Metric,
+      opts: {
+        threshold: number;
+        evaluationPeriods: number;
+        description: string;
+        comparison?: ComparisonOperator;
+        missingData?: TreatMissingData;
+      },
+    ) => {
+      const a = new Alarm(this, id, {
+        metric,
+        threshold: opts.threshold,
+        evaluationPeriods: opts.evaluationPeriods,
+        alarmDescription: opts.description,
+        comparisonOperator:
+          opts.comparison ??
+          ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: opts.missingData ?? TreatMissingData.NOT_BREACHING,
+      });
+      a.addAlarmAction(new SnsAction(ops));
+      return a;
+    };
+
+    alarm("CheckerErrors", checker.metricErrors({ period: Duration.minutes(5) }), {
+      threshold: 3,
+      evaluationPeriods: 1,
+      description: "Checker is throwing. Monitors may not be getting checked.",
+    });
+
+    // The schedule fires every minute, so a 5-minute window should show ~5
+    // invocations. Near zero means EventBridge stopped delivering or the
+    // function is unreachable — the failure mode that produces silence
+    // rather than errors.
+    alarm(
+      "CheckerNotRunning",
+      checker.metricInvocations({ period: Duration.minutes(5) }),
+      {
+        threshold: 2,
+        evaluationPeriods: 1,
+        description: "Checker has nearly stopped running.",
+        comparison: ComparisonOperator.LESS_THAN_THRESHOLD,
+        // Absent data here means no invocations at all, which is the thing
+        // we're trying to catch.
+        missingData: TreatMissingData.BREACHING,
+      },
+    );
+
+    // Timeout is 30s; sustained runs past 24s mean we're about to start
+    // losing whole batches.
+    alarm(
+      "CheckerSlow",
+      checker.metricDuration({ period: Duration.minutes(5), statistic: "p95" }),
+      {
+        threshold: 24_000,
+        evaluationPeriods: 2,
+        description: "Checker p95 duration is approaching its timeout.",
+      },
+    );
+
+    alarm("AlertErrors", alert.metricErrors({ period: Duration.minutes(5) }), {
+      threshold: 3,
+      evaluationPeriods: 1,
+      description: "Alert consumer is failing. Downtime emails may not be sent.",
+    });
+
+    // Anything here already exhausted its retries, so one message is worth
+    // looking at.
+    alarm(
+      "AlertsDeadLettered",
+      alertDlq.metricApproximateNumberOfMessagesVisible({
+        period: Duration.minutes(5),
+      }),
+      {
+        threshold: 1,
+        evaluationPeriods: 1,
+        description: "Alerts landed in the DLQ and were never delivered.",
+      },
+    );
+
+    // Alerts are supposed to go out within a minute of detection.
+    alarm(
+      "AlertBacklog",
+      alertQueue.metricApproximateAgeOfOldestMessage({
+        period: Duration.minutes(5),
+      }),
+      {
+        threshold: 300,
+        evaluationPeriods: 1,
+        description: "Alerts are queued but not being delivered.",
+      },
+    );
+
     new CfnOutput(this, "TableName", { value: table.tableName });
     new CfnOutput(this, "AlertQueueUrl", { value: alertQueue.queueUrl });
+    new CfnOutput(this, "OpsAlarmTopicArn", { value: ops.topicArn });
   }
 }

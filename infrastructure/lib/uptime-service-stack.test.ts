@@ -50,6 +50,33 @@ describe("UptimeServiceStack", () => {
     });
   });
 
+  it("alarms on the checker silently stopping, not just erroring", () => {
+    // Errors are the easy case. The dangerous failure is the schedule dying,
+    // which produces no errors at all.
+    template.hasResourceProperties("AWS::CloudWatch::Alarm", {
+      MetricName: "Invocations",
+      ComparisonOperator: "LessThanThreshold",
+      TreatMissingData: "breaching",
+    });
+  });
+
+  it("alarms on dead-lettered alerts", () => {
+    template.hasResourceProperties("AWS::CloudWatch::Alarm", {
+      MetricName: "ApproximateNumberOfMessagesVisible",
+      Threshold: 1,
+    });
+  });
+
+  it("routes every alarm to the ops topic", () => {
+    const alarms = template.findResources("AWS::CloudWatch::Alarm");
+    expect(Object.keys(alarms).length).toBeGreaterThanOrEqual(6);
+    for (const [name, alarm] of Object.entries(alarms)) {
+      expect(alarm.Properties?.AlarmActions, `${name} has no action`).toEqual([
+        { Ref: expect.stringContaining("OpsAlarms") },
+      ]);
+    }
+  });
+
   it("defines exactly the two lambdas with 7-day log retention", () => {
     template.resourceCountIs("AWS::Lambda::Function", 2);
     const logGroups = template.findResources("AWS::Logs::LogGroup");

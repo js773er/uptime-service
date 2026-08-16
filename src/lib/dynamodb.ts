@@ -13,7 +13,21 @@ const REGION = process.env.AWS_REGION ?? "ap-southeast-2";
  */
 export const TABLE_NAME = process.env.TABLE_NAME ?? "uptime-service";
 
-const client = new DynamoDBClient({ region: REGION });
+/**
+ * Set to point at DynamoDB Local instead of AWS. Used by the integration
+ * tests and handy for offline work; unset everywhere else.
+ */
+const ENDPOINT = process.env.DYNAMODB_ENDPOINT;
+
+const client = new DynamoDBClient({
+  region: REGION,
+  ...(ENDPOINT
+    ? {
+        endpoint: ENDPOINT,
+        credentials: { accessKeyId: "local", secretAccessKey: "local" },
+      }
+    : {}),
+});
 
 /**
  * Document client wrapper: lets us work with plain JS objects instead of
